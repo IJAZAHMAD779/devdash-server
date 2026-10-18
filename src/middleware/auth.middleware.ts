@@ -55,12 +55,13 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
         }
         userId = payload.sub;
       } catch (verifyError: any) {
+        console.error("[AuthMiddleware] verifyToken failed:", verifyError?.message || verifyError);
         return res.status(401).json({
           success: false,
           error: {
             code: "UNAUTHORIZED",
             message: "Token verification failed.",
-            details: process.env.NODE_ENV === "development" ? verifyError.message : undefined,
+            details: verifyError?.message || "Invalid Clerk JWT",
           },
         });
       }
