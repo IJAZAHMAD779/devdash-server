@@ -63,10 +63,14 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
         try {
           const parts = token.split(".");
           if (parts.length === 3) {
-            const rawPayload = Buffer.from(parts[1], "base64").toString("utf8");
+            // JWT parts are base64url encoded
+            const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+            const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+            const rawPayload = Buffer.from(b64 + pad, "base64").toString("utf8");
             const parsed = JSON.parse(rawPayload);
-            if (parsed.sub && (parsed.iss?.includes("clerk") || parsed.sub.startsWith("user_"))) {
-              verifiedSub = parsed.sub;
+            const extractedSub = parsed.sub || parsed.userId || parsed.id;
+            if (extractedSub && typeof extractedSub === "string") {
+              verifiedSub = extractedSub;
               console.log("[AuthMiddleware] Authenticated user via Clerk JWT claims:", verifiedSub);
             }
           }
