@@ -20,8 +20,13 @@ const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 app.use(helmet());
 app.use(
   cors({
-    origin: [CLIENT_URL, "http://localhost:3000", "https://devdash.vercel.app"],
+    origin: (origin, callback) => {
+      // Allow all client origins (Vercel deployments, custom domains, localhost)
+      callback(null, true);
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   })
 );
 app.use(express.json({ limit: "5mb" }));
