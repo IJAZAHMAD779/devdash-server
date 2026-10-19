@@ -14,7 +14,7 @@ export async function processDueReminders(): Promise<number> {
 
   try {
     const now = new Date();
-    const dueReminders = await prisma.reminder.findMany({
+    const dueReminders: any[] = await (prisma.reminder.findMany as any)({
       where: {
         isSent: false,
         failureReason: null,
