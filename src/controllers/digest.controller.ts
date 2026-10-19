@@ -117,9 +117,15 @@ export const previewDigest = async (
   }
 };
 
+import { z } from "zod";
+
+const sendDigestSchema = z.object({
+  recipientEmail: z.string().email("Invalid email format").optional(),
+});
+
 /**
  * POST /api/v1/digest/send
- * Dispatches the weekly developer digest email to user's registered email via Resend.
+ * Dispatches the weekly developer digest email to user's registered or provided email via Resend.
  */
 export const sendDigest = async (
   req: Request,
@@ -128,25 +134,41 @@ export const sendDigest = async (
 ) => {
   try {
     const userId = req.auth!.userId;
+    const { recipientEmail } = sendDigestSchema.parse(req.body || {});
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
     });
 
-    if (!user || !user.email) {
-      return res.status(404).json({
+    const targetEmail = recipientEmail || user?.email;
+
+    if (!targetEmail || targetEmail.endsWith("@devdash.local")) {
+      return res.status(400).json({
         success: false,
         error: {
-          code: "USER_EMAIL_NOT_FOUND",
-          message: "No email address registered for the authenticated user",
+          code: "VALID_EMAIL_REQUIRED",
+          message:
+            "Please provide a valid recipient email address to receive your weekly digest.",
         },
       });
     }
 
+    // If a new real email was provided, persist it in the user profile for future digests and reminders
+    if (recipientEmail && user && user.email !== recipientEmail) {
+      try {
+        await prisma.user.update({
+          where: { id: userId },
+          data: { email: recipientEmail },
+        });
+      } catch (updateErr) {
+        console.warn("[DigestController] Could not update user email:", updateErr);
+      }
+    }
+
     const stats = await gatherUserDigestStats(userId);
     const result = await sendWeeklyDigestEmail(
-      user.email,
-      user.name || "Developer",
+      targetEmail,
+      user?.name || "Developer",
       stats
     );
 
@@ -154,7 +176,7 @@ export const sendDigest = async (
       success: true,
       message: "Weekly developer digest email dispatched successfully via Resend",
       data: {
-        recipient: user.email,
+        recipient: targetEmail,
         deliveredAt: new Date().toISOString(),
         mode: result.mode,
         emailId: result.id,

@@ -164,6 +164,11 @@ export async function sendWeeklyDigestEmail(
       html,
     });
 
+    if (result.error) {
+      console.error("[Resend Error] API returned error:", result.error);
+      throw new Error(result.error.message || "Resend failed to send weekly digest email");
+    }
+
     return {
       success: true,
       id: result.data?.id,
@@ -171,6 +176,123 @@ export async function sendWeeklyDigestEmail(
     };
   } catch (err) {
     console.error("[Resend Error] Failed to send weekly digest email:", err);
+    throw err;
+  }
+}
+
+/**
+ * Builds HTML email template for task reminders
+ */
+export function buildReminderEmailHtml(
+  userName: string,
+  title: string,
+  description?: string | null,
+  remindAt?: Date
+): string {
+  const formattedDate = remindAt
+    ? remindAt.toUTCString()
+    : new Date().toUTCString();
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DevDash Reminder: ${title}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #010102; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f7f8f8;">
+  <div style="max-width: 580px; margin: 0 auto; padding: 36px 20px;">
+    
+    <!-- Header -->
+    <div style="text-align: center; margin-bottom: 28px;">
+      <div style="display: inline-block; width: 40px; height: 40px; background: #2563eb; border-radius: 10px; line-height: 40px; text-align: center; color: #ffffff; font-weight: bold; font-size: 20px; margin-bottom: 12px; box-shadow: 0 0 20px rgba(37,99,235,0.4);">⏰</div>
+      <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: #f7f8f8;">Task Reminder</h1>
+      <p style="margin: 6px 0 0; color: #8a8f98; font-size: 13px;">Scheduled engineering notification from DevDash</p>
+    </div>
+
+    <!-- Reminder Card -->
+    <div style="background: #0f1011; border: 1px solid #23252a; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+      <div style="font-size: 11px; font-family: monospace; text-transform: uppercase; letter-spacing: 1px; color: #3b82f6; margin-bottom: 8px;">
+        Scheduled For ${formattedDate}
+      </div>
+      <h2 style="margin: 0 0 12px; font-size: 18px; font-weight: 600; color: #f7f8f8; letter-spacing: -0.3px;">
+        ${title}
+      </h2>
+      ${
+        description
+          ? `<p style="margin: 0 0 16px; font-size: 14px; color: #d0d6e0; line-height: 1.6; white-space: pre-wrap; background: #141516; border: 1px solid #23252a; border-radius: 8px; padding: 12px 14px;">${description}</p>`
+          : ""
+      }
+      <div style="margin-top: 16px; font-size: 13px; color: #8a8f98;">
+        Assigned to: <strong style="color: #f7f8f8;">${userName}</strong>
+      </div>
+    </div>
+
+    <!-- CTA Button -->
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${process.env.CLIENT_URL || "https://developerdesk.vercel.app"}/tasks" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 14px; letter-spacing: -0.1px;">
+        Open Tasks in DevDash
+      </a>
+    </div>
+
+    <!-- Footer -->
+    <div style="text-align: center; font-size: 11px; color: #62656d; border-top: 1px solid #18191a; padding-top: 20px;">
+      <p style="margin: 0 0 6px;">Sent with ♥ by DevDash • Personal Developer Workspace</p>
+      <p style="margin: 0;">Automated reminder notification via Resend</p>
+    </div>
+
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
+ * Dispatches an individual task reminder email via Resend
+ */
+export async function sendReminderEmail(
+  toEmail: string,
+  userName: string,
+  title: string,
+  description?: string | null,
+  remindAt?: Date
+): Promise<{ success: boolean; id?: string; mode: "live" | "simulated" }> {
+  const resend = getResendClient();
+  const html = buildReminderEmailHtml(userName, title, description, remindAt);
+
+  if (!resend) {
+    console.log(
+      `[Resend Simulated] Reminder generated for ${toEmail} (${userName}): "${title}". No live RESEND_API_KEY configured.`
+    );
+    return {
+      success: true,
+      id: `simulated-${Date.now()}`,
+      mode: "simulated",
+    };
+  }
+
+  try {
+    const fromAddress =
+      process.env.RESEND_FROM_EMAIL || "DevDash <onboarding@resend.dev>";
+    const result = await resend.emails.send({
+      from: fromAddress,
+      to: toEmail,
+      subject: `⏰ Reminder: ${title}`,
+      html,
+    });
+
+    if (result.error) {
+      console.error("[Resend Error] Failed to send reminder email:", result.error);
+      throw new Error(result.error.message || "Resend failed to send reminder email");
+    }
+
+    return {
+      success: true,
+      id: result.data?.id,
+      mode: "live",
+    };
+  } catch (err) {
+    console.error("[Resend Error] Failed to send reminder email:", err);
     throw err;
   }
 }

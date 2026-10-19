@@ -10,6 +10,8 @@ import bookmarkRoutes from "./routes/bookmark.routes";
 import noteRoutes from "./routes/note.routes";
 import searchRoutes from "./routes/search.routes";
 import digestRoutes from "./routes/digest.routes";
+import reminderRoutes from "./routes/reminder.routes";
+import { initReminderScheduler } from "./services/reminder-scheduler.service";
 import { errorHandler } from "./middleware/error.middleware";
 
 const app = express();
@@ -26,7 +28,13 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "X-User-Email",
+      "X-User-Name",
+    ],
   })
 );
 app.use(express.json({ limit: "5mb" }));
@@ -61,6 +69,9 @@ app.use("/api/v1/search", searchRoutes);
 // Section 10: Weekly Digest API
 app.use("/api/v1/digest", digestRoutes);
 
+// Section 11: Task Reminders API
+app.use("/api/v1/reminders", reminderRoutes);
+
 // Catch-all 404 for unhandled API routes
 app.use((req: Request, res: Response) => {
   res.status(404).json({
@@ -79,6 +90,7 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`[DevDash Server] REST API listening on http://localhost:${PORT}`);
     console.log(`[DevDash Server] Healthcheck available at http://localhost:${PORT}/health`);
+    initReminderScheduler();
   });
 }
 

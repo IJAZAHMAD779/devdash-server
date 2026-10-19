@@ -99,17 +99,26 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
         where: { id: userId },
       });
 
+      const headerEmail =
+        typeof req.headers["x-user-email"] === "string"
+          ? req.headers["x-user-email"].trim()
+          : null;
+      const headerName =
+        typeof req.headers["x-user-name"] === "string"
+          ? req.headers["x-user-name"].trim()
+          : null;
+
       if (!existingUser) {
-        let email = `${userId}@devdash.local`;
-        let name: string | null = null;
+        let email = headerEmail || `${userId}@devdash.local`;
+        let name: string | null = headerName || null;
         let avatarUrl: string | null = null;
 
-        if (secretKey && !isPlaceholderSecret) {
+        if (secretKey && !isPlaceholderSecret && !headerEmail) {
           try {
             const clerk = createClerkClient({ secretKey });
             const clerkUser = await clerk.users.getUser(userId);
             email = clerkUser.emailAddresses?.[0]?.emailAddress || email;
-            name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+            name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || name;
             avatarUrl = clerkUser.imageUrl || null;
           } catch {
             // Fallback silently if Clerk user fetch fails
@@ -118,12 +127,23 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
         await prisma.user.upsert({
           where: { id: userId },
-          update: {},
+          update: {
+            ...(headerEmail && { email: headerEmail }),
+            ...(headerName && { name: headerName }),
+          },
           create: {
             id: userId,
             email,
             name,
             avatarUrl,
+          },
+        });
+      } else if (headerEmail && (existingUser.email.endsWith("@devdash.local") || existingUser.email !== headerEmail)) {
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            email: headerEmail,
+            ...(headerName && { name: headerName }),
           },
         });
       }
