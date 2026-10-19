@@ -49,15 +49,6 @@ enum ComponentStyling {
   STYLED_COMPONENTS
 }
 
-enum BookmarkCategory {
-  DOCS
-  ARTICLE
-  TOOL
-  LIBRARY
-  VIDEO
-  TUTORIAL
-}
-
 enum ActivityAction {
   CREATED
   UPDATED

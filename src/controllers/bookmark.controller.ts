@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import {
   createBookmarkSchema,
@@ -97,16 +98,18 @@ export const createBookmark = async (
       }
     }
 
+    const createData: Prisma.BookmarkUncheckedCreateInput = {
+      userId,
+      title: input.title,
+      url: input.url,
+      category: (input.category || "tools").trim().toLowerCase(),
+      tags: input.tags,
+      notes: input.notes || null,
+      projectId: input.projectId || null,
+    };
+
     const bookmark = await prisma.bookmark.create({
-      data: {
-        userId,
-        title: input.title,
-        url: input.url,
-        category: (input.category || "tools").trim().toLowerCase(),
-        tags: input.tags,
-        notes: input.notes || null,
-        projectId: input.projectId || null,
-      },
+      data: createData,
       include: {
         project: {
           select: { id: true, title: true },
@@ -218,18 +221,20 @@ export const updateBookmark = async (
       }
     }
 
+    const updateData: Prisma.BookmarkUncheckedUpdateInput = {
+      ...(input.title !== undefined && { title: input.title }),
+      ...(input.url !== undefined && { url: input.url }),
+      ...(input.category !== undefined && {
+        category: input.category.trim().toLowerCase(),
+      }),
+      ...(input.tags !== undefined && { tags: input.tags }),
+      ...(input.notes !== undefined && { notes: input.notes }),
+      ...(input.projectId !== undefined && { projectId: input.projectId }),
+    };
+
     const updated = await prisma.bookmark.update({
       where: { id },
-      data: {
-        ...(input.title !== undefined && { title: input.title }),
-        ...(input.url !== undefined && { url: input.url }),
-        ...(input.category !== undefined && {
-          category: input.category.trim().toLowerCase(),
-        }),
-        ...(input.tags !== undefined && { tags: input.tags }),
-        ...(input.notes !== undefined && { notes: input.notes }),
-        ...(input.projectId !== undefined && { projectId: input.projectId }),
-      },
+      data: updateData,
       include: {
         project: {
           select: { id: true, title: true },
