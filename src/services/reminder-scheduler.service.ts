@@ -45,7 +45,7 @@ export async function processDueReminders(): Promise<number> {
           data: {
             isSent: false,
             failureReason: "No real recipient email found on account. Please set a valid email.",
-          },
+          } as any,
         });
         continue;
       }
@@ -72,7 +72,7 @@ export async function processDueReminders(): Promise<number> {
             isSent: true,
             sentAt: new Date(),
             failureReason: null,
-          },
+          } as any,
         });
 
         console.log(
@@ -89,7 +89,7 @@ export async function processDueReminders(): Promise<number> {
           data: {
             isSent: false,
             failureReason: errMsg.substring(0, 500),
-          },
+          } as any,
         });
       }
     }

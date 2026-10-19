@@ -259,7 +259,7 @@ export const retryReminder = async (
           isSent: true,
           sentAt: new Date(),
           failureReason: null,
-        },
+        } as any,
         include: { task: true },
       });
 
@@ -274,7 +274,7 @@ export const retryReminder = async (
         data: {
           isSent: false,
           failureReason: errMsg.substring(0, 500),
-        },
+        } as any,
       });
 
       return res.status(400).json({
