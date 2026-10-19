@@ -12,6 +12,7 @@ import {
   getBookmarkById,
   updateBookmark,
   deleteBookmark,
+  getBookmarkPreview,
 } from "../controllers/bookmark.controller";
 
 const router = Router();
@@ -21,6 +22,7 @@ router.use(requireAuth);
 
 router.get("/", validate({ query: bookmarkQuerySchema }), getBookmarks);
 router.post("/", validate({ body: createBookmarkSchema }), createBookmark);
+router.get("/preview", getBookmarkPreview);
 router.get("/:id", getBookmarkById);
 router.put("/:id", validate({ body: updateBookmarkSchema }), updateBookmark);
 router.delete("/:id", deleteBookmark);

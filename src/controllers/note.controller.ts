@@ -47,7 +47,7 @@ export const getNotes = async (
 
     const notes = await prisma.note.findMany({
       where: whereClause,
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ favorite: "desc" }, { updatedAt: "desc" }],
       include: {
         project: {
           select: { id: true, title: true },

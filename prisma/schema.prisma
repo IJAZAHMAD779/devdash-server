@@ -199,7 +199,7 @@ model Bookmark {
   projectId String?
   title     String
   url       String
-  category  BookmarkCategory @default(DOCS)
+  category  String           @default("tools")
   tags      String[]         @default([])
   notes     String?          @db.Text
   createdAt DateTime         @default(now())

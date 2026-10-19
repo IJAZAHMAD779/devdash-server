@@ -5,7 +5,6 @@ import {
   updateBookmarkSchema,
   bookmarkQuerySchema,
 } from "../validators/bookmark.validator";
-import { BookmarkCategory } from "@prisma/client";
 
 /**
  * GET /api/v1/bookmarks
@@ -24,8 +23,11 @@ export const getBookmarks = async (
       userId,
     };
 
-    if (query.category) {
-      whereClause.category = query.category as BookmarkCategory;
+    if (query.category && query.category.toLowerCase() !== "all") {
+      whereClause.category = {
+        equals: query.category,
+        mode: "insensitive",
+      };
     }
 
     if (query.projectId) {
@@ -100,7 +102,7 @@ export const createBookmark = async (
         userId,
         title: input.title,
         url: input.url,
-        category: (input.category as BookmarkCategory) || "DOCS",
+        category: (input.category || "tools").trim().toLowerCase(),
         tags: input.tags,
         notes: input.notes || null,
         projectId: input.projectId || null,
@@ -222,7 +224,7 @@ export const updateBookmark = async (
         ...(input.title !== undefined && { title: input.title }),
         ...(input.url !== undefined && { url: input.url }),
         ...(input.category !== undefined && {
-          category: input.category as BookmarkCategory,
+          category: input.category.trim().toLowerCase(),
         }),
         ...(input.tags !== undefined && { tags: input.tags }),
         ...(input.notes !== undefined && { notes: input.notes }),
@@ -238,6 +240,150 @@ export const updateBookmark = async (
     return res.status(200).json({
       success: true,
       data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/v1/bookmarks/preview?url=...
+ * Fetches HTML title, description, and favicon for a given URL with timeout and fallback.
+ */
+export const getBookmarkPreview = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const rawUrl = req.query.url as string;
+    if (!rawUrl || typeof rawUrl !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_URL",
+          message: "A valid URL query parameter is required",
+        },
+      });
+    }
+
+    let parsedUrl: URL;
+    try {
+      let formatted = rawUrl.trim();
+      if (!/^https?:\/\//i.test(formatted)) {
+        formatted = `https://${formatted}`;
+      }
+      parsedUrl = new URL(formatted);
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_URL",
+          message: "Could not parse provided URL",
+        },
+      });
+    }
+
+    const domain = parsedUrl.hostname.replace(/^www\./, "");
+    const fallbackFavicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+
+    let title = domain;
+    let description = "";
+    let favicon = fallbackFavicon;
+
+    try {
+      const response = await fetch(parsedUrl.href, {
+        signal: AbortSignal.timeout(4500),
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        const headHtml = text.slice(0, 150000);
+
+        // Extract og:title or title tag
+        const ogTitleMatch =
+          headHtml.match(
+            /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i
+          );
+        const titleTagMatch = headHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
+
+        if (ogTitleMatch && ogTitleMatch[1]) {
+          title = ogTitleMatch[1].trim();
+        } else if (titleTagMatch && titleTagMatch[1]) {
+          title = titleTagMatch[1].trim();
+        }
+
+        // Clean HTML entities from title
+        title = title
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&ndash;/g, "–")
+          .replace(/&mdash;/g, "—")
+          .trim();
+
+        // Extract description
+        const ogDescMatch =
+          headHtml.match(
+            /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i
+          );
+
+        if (ogDescMatch && ogDescMatch[1]) {
+          description = ogDescMatch[1]
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .trim();
+        }
+
+        // Extract favicon link
+        const iconMatch =
+          headHtml.match(
+            /<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i
+          );
+
+        if (iconMatch && iconMatch[1]) {
+          try {
+            favicon = new URL(iconMatch[1], parsedUrl.origin).href;
+          } catch {
+            favicon = fallbackFavicon;
+          }
+        }
+      }
+    } catch {
+      // Fallback values retained
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        title,
+        description,
+        favicon,
+        domain,
+        url: parsedUrl.href,
+      },
     });
   } catch (error) {
     next(error);

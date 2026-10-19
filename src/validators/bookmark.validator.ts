@@ -1,14 +1,5 @@
 import { z } from "zod";
 
-export const BookmarkCategoryEnum = z.enum([
-  "DOCS",
-  "ARTICLE",
-  "TOOL",
-  "LIBRARY",
-  "VIDEO",
-  "TUTORIAL",
-]);
-
 export const createBookmarkSchema = z.object({
   title: z
     .string({ required_error: "Title is required" })
@@ -17,7 +8,7 @@ export const createBookmarkSchema = z.object({
   url: z
     .string({ required_error: "URL is required" })
     .url("Must be a valid URL"),
-  category: BookmarkCategoryEnum.default("DOCS"),
+  category: z.string().min(1, "Category cannot be empty").max(50).default("tools"),
   tags: z.array(z.string()).default([]),
   notes: z.string().optional().nullable(),
   projectId: z.string().uuid("Invalid project ID").optional().nullable(),
@@ -26,7 +17,7 @@ export const createBookmarkSchema = z.object({
 export const updateBookmarkSchema = createBookmarkSchema.partial();
 
 export const bookmarkQuerySchema = z.object({
-  category: BookmarkCategoryEnum.optional(),
+  category: z.string().optional(),
   projectId: z.string().uuid().optional(),
   tag: z.string().optional(),
   search: z.string().optional(),
