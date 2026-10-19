@@ -254,9 +254,10 @@ model Reminder {
   title       String
   description String?   @db.Text
   remindAt    DateTime
-  isSent      Boolean   @default(false)
-  sentAt      DateTime?
-  taskId      String?
+  isSent        Boolean   @default(false)
+  sentAt        DateTime?
+  failureReason String?   @map("failure_reason") @db.Text
+  taskId        String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

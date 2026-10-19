@@ -10,12 +10,25 @@ export interface DigestStats {
   weekEnd: Date;
 }
 
-const getResendClient = () => {
+export const isResendConfigured = (): boolean => {
   const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey || apiKey === "re_test_mock_key" || apiKey.startsWith("placeholder")) {
+  if (
+    !apiKey ||
+    apiKey === "re_test_mock_key" ||
+    apiKey.includes("placeholder") ||
+    apiKey.startsWith("your_") ||
+    apiKey.length < 20
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const getResendClient = () => {
+  if (!isResendConfigured()) {
     return null;
   }
-  return new Resend(apiKey);
+  return new Resend(process.env.RESEND_API_KEY!);
 };
 
 /**
@@ -144,14 +157,12 @@ export async function sendWeeklyDigestEmail(
   const html = buildWeeklyDigestHtml(userName, stats);
 
   if (!resend) {
-    console.log(
-      `[Resend Simulated] Weekly digest generated for ${toEmail} (${userName}). No live RESEND_API_KEY configured.`
+    const keyHint = process.env.RESEND_API_KEY
+      ? `(currently '${process.env.RESEND_API_KEY}')`
+      : "(not provided)";
+    throw new Error(
+      `Resend API key is invalid or not configured ${keyHint}. Add a live RESEND_API_KEY from resend.com in Render environment variables.`
     );
-    return {
-      success: true,
-      id: `simulated-${Date.now()}`,
-      mode: "simulated",
-    };
   }
 
   try {
@@ -261,14 +272,12 @@ export async function sendReminderEmail(
   const html = buildReminderEmailHtml(userName, title, description, remindAt);
 
   if (!resend) {
-    console.log(
-      `[Resend Simulated] Reminder generated for ${toEmail} (${userName}): "${title}". No live RESEND_API_KEY configured.`
+    const keyHint = process.env.RESEND_API_KEY
+      ? `(currently '${process.env.RESEND_API_KEY}')`
+      : "(not provided)";
+    throw new Error(
+      `Resend API key is invalid or not configured ${keyHint}. Add a live RESEND_API_KEY from resend.com in Render environment variables.`
     );
-    return {
-      success: true,
-      id: `simulated-${Date.now()}`,
-      mode: "simulated",
-    };
   }
 
   try {

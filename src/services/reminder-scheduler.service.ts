@@ -17,6 +17,7 @@ export async function processDueReminders(): Promise<number> {
     const dueReminders = await prisma.reminder.findMany({
       where: {
         isSent: false,
+        failureReason: null,
         remindAt: { lte: now },
       },
       include: {
@@ -39,10 +40,12 @@ export async function processDueReminders(): Promise<number> {
         console.warn(
           `[ReminderScheduler] Skipping reminder "${reminder.title}" (ID: ${reminder.id}): No valid recipient email found (stored: ${recipientEmail})`
         );
-        // Mark as sent to avoid repeated attempts on invalid placeholder emails
         await prisma.reminder.update({
           where: { id: reminder.id },
-          data: { isSent: true, sentAt: new Date() },
+          data: {
+            isSent: false,
+            failureReason: "No real recipient email found on account. Please set a valid email.",
+          },
         });
         continue;
       }
@@ -68,21 +71,25 @@ export async function processDueReminders(): Promise<number> {
           data: {
             isSent: true,
             sentAt: new Date(),
+            failureReason: null,
           },
         });
 
         console.log(
           `[ReminderScheduler] Successfully dispatched reminder "${reminder.title}" to ${recipientEmail} (mode: ${result.mode}, ID: ${result.id})`
         );
-      } catch (sendErr) {
+      } catch (sendErr: any) {
+        const errMsg = sendErr?.message || String(sendErr);
         console.error(
           `[ReminderScheduler] Failed to dispatch reminder "${reminder.title}" to ${recipientEmail}:`,
-          sendErr
+          errMsg
         );
-        // Mark as sent with failed attempt to prevent infinite mail storms
         await prisma.reminder.update({
           where: { id: reminder.id },
-          data: { isSent: true, sentAt: new Date() },
+          data: {
+            isSent: false,
+            failureReason: errMsg.substring(0, 500),
+          },
         });
       }
     }

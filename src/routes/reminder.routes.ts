@@ -5,6 +5,8 @@ import {
   createReminder,
   deleteReminder,
   checkDueReminders,
+  getReminderHealth,
+  retryReminder,
 } from "../controllers/reminder.controller";
 
 const router = Router();
@@ -12,8 +14,10 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/", getReminders);
+router.get("/health", getReminderHealth);
 router.post("/", createReminder);
-router.delete("/:id", deleteReminder);
 router.post("/check", checkDueReminders);
+router.post("/:id/retry", retryReminder);
+router.delete("/:id", deleteReminder);
 
 export default router;
