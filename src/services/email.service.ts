@@ -45,7 +45,7 @@ export function buildWeeklyDigestHtml(
             (p) => `
           <div style="background: #141516; border: 1px solid #23252a; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;">
             <div style="color: #f7f8f8; font-weight: 600; font-size: 14px;">${p.title}</div>
-            <div style="color: #5e6ad2; font-size: 11px; text-transform: uppercase; font-family: monospace; margin-top: 2px;">${p.status}</div>
+            <div style="color: #2563eb; font-size: 11px; text-transform: uppercase; font-family: monospace; margin-top: 2px;">${p.status}</div>
           </div>`
           )
           .join("")
@@ -63,7 +63,7 @@ export function buildWeeklyDigestHtml(
     
     <!-- Header -->
     <div style="text-align: center; margin-bottom: 32px;">
-      <div style="display: inline-block; width: 36px; height: 36px; background: #5e6ad2; border-radius: 8px; line-height: 36px; text-align: center; color: #ffffff; font-weight: bold; font-size: 18px; margin-bottom: 12px;">D</div>
+      <div style="display: inline-block; width: 36px; height: 36px; background: #2563eb; border-radius: 8px; line-height: 36px; text-align: center; color: #ffffff; font-weight: bold; font-size: 18px; margin-bottom: 12px;">D</div>
       <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.6px; color: #f7f8f8;">Weekly Developer Digest</h1>
       <p style="margin: 6px 0 0; color: #8a8f98; font-size: 13px;">Your workspace velocity and engineering highlights</p>
     </div>
@@ -83,7 +83,7 @@ export function buildWeeklyDigestHtml(
           </td>
           <td style="width: 4px;"></td>
           <td style="width: 33%; text-align: center; background: #141516; border: 1px solid #23252a; border-radius: 8px; padding: 14px 8px;">
-            <div style="font-size: 24px; font-weight: 700; color: #5e6ad2;">${stats.newSnippetsCount + stats.newComponentsCount}</div>
+            <div style="font-size: 24px; font-weight: 700; color: #2563eb;">${stats.newSnippetsCount + stats.newComponentsCount}</div>
             <div style="font-size: 11px; color: #8a8f98; text-transform: uppercase; margin-top: 4px;">Vault Assets</div>
           </td>
           <td style="width: 4px;"></td>
@@ -115,7 +115,7 @@ export function buildWeeklyDigestHtml(
 
     <!-- CTA Button -->
     <div style="text-align: center; margin: 36px 0;">
-      <a href="${process.env.CLIENT_URL || "http://localhost:3000"}" style="display: inline-block; background-color: #5e6ad2; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 14px; letter-spacing: -0.1px;">
+      <a href="${process.env.CLIENT_URL || "http://localhost:3000"}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; font-size: 14px; letter-spacing: -0.1px;">
         Open DevDash Workspace
       </a>
     </div>
