@@ -341,8 +341,9 @@ export const getProjectUrlPreview = async (
       });
     }
 
+    const forceRefresh = req.query.refresh === "true";
     const cached = previewCache.get(parsedUrl.href);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
       return res.status(200).json({
         success: true,
         data: cached.data,
@@ -359,25 +360,31 @@ export const getProjectUrlPreview = async (
 
     try {
       const response = await fetch(parsedUrl.href, {
-        signal: AbortSignal.timeout(4500),
+        signal: AbortSignal.timeout(6000),
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
       });
 
-      if (response.ok) {
+      // Parse HTML even for status codes < 500 (e.g. 404, 401, 403 pages often contain full OG tags)
+      if (response.status < 500) {
         const text = await response.text();
-        const headHtml = text.slice(0, 150000);
+        const headHtml = text.slice(0, 200000);
 
-        // Extract og:title or <title>
+        // Extract og:title, twitter:title, or <title>
         const ogTitleMatch =
           headHtml.match(
-            /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i
+            /<meta[^>]*property=["'](?:og:title|twitter:title)["'][^>]*content=["']([^"']+)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["'](?:og:title|twitter:title)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*name=["'](?:twitter:title|title)["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["'](?:twitter:title|title)["']/i
           );
         const titleTagMatch = headHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
 
@@ -400,13 +407,16 @@ export const getProjectUrlPreview = async (
         // Extract description
         const ogDescMatch =
           headHtml.match(
-            /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i
+            /<meta[^>]*property=["'](?:og:description|twitter:description)["'][^>]*content=["']([^"']+)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["'](?:og:description|twitter:description)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i
+            /<meta[^>]*name=["'](?:description|twitter:description)["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["'](?:description|twitter:description)["']/i
           );
 
         if (ogDescMatch && ogDescMatch[1]) {
@@ -422,16 +432,16 @@ export const getProjectUrlPreview = async (
         // Extract og:image
         const ogImageMatch =
           headHtml.match(
-            /<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i
+            /<meta[^>]*property=["'](?:og:image|og:image:url|og:image:secure_url)["'][^>]*content=["']([^"']+)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["'](?:og:image|og:image:url|og:image:secure_url)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i
+            /<meta[^>]*name=["'](?:twitter:image|twitter:image:src|og:image)["'][^>]*content=["']([^"']+)["']/i
           ) ||
           headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["'](?:twitter:image|twitter:image:src|og:image)["']/i
           );
 
         if (ogImageMatch && ogImageMatch[1]) {
@@ -463,6 +473,26 @@ export const getProjectUrlPreview = async (
       // Retain fallback values
     }
 
+    // Secondary fallback: Probe standard static OG paths if image not found in HTML
+    if (!image) {
+      const candidatePaths = ["/opengraph-image.png", "/og.png", "/opengraph-image.jpg"];
+      for (const p of candidatePaths) {
+        try {
+          const probeUrl = `${parsedUrl.origin}${p}`;
+          const probeRes = await fetch(probeUrl, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(2000),
+          });
+          if (probeRes.ok) {
+            image = probeUrl;
+            break;
+          }
+        } catch {
+          // ignore candidate error
+        }
+      }
+    }
+
     const previewData = {
       title,
       description,
@@ -472,9 +502,11 @@ export const getProjectUrlPreview = async (
       url: parsedUrl.href,
     };
 
+    // Cache successful previews for 6h; cache empty/null images for only 60 seconds
+    const ttl = image ? 6 * 60 * 60 * 1000 : 60 * 1000;
     previewCache.set(parsedUrl.href, {
       data: previewData,
-      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      expiresAt: Date.now() + ttl,
     });
 
     return res.status(200).json({
