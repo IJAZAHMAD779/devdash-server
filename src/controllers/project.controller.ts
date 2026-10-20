@@ -284,3 +284,334 @@ export const deleteProject = async (req: Request, res: Response, next: NextFunct
     return next(error);
   }
 };
+
+// -------------------------------------------------------------
+// METADATA & TELEMETRY ENGINE
+// -------------------------------------------------------------
+
+interface PreviewCacheItem {
+  data: {
+    title: string;
+    description: string;
+    image: string | null;
+    favicon: string;
+    domain: string;
+    url: string;
+  };
+  expiresAt: number;
+}
+
+const previewCache = new Map<string, PreviewCacheItem>();
+
+/**
+ * GET /api/v1/projects/preview?url=...
+ * Extracts OpenGraph metadata (og:image, og:title, og:description, favicon) with 6-hour caching.
+ */
+export const getProjectUrlPreview = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const rawUrl = req.query.url as string;
+    if (!rawUrl || typeof rawUrl !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_URL",
+          message: "A valid URL query parameter is required",
+        },
+      });
+    }
+
+    let parsedUrl: URL;
+    try {
+      let formatted = rawUrl.trim();
+      if (!/^https?:\/\//i.test(formatted)) {
+        formatted = `https://${formatted}`;
+      }
+      parsedUrl = new URL(formatted);
+    } catch {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_URL",
+          message: "Could not parse provided URL",
+        },
+      });
+    }
+
+    const cached = previewCache.get(parsedUrl.href);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.status(200).json({
+        success: true,
+        data: cached.data,
+      });
+    }
+
+    const domain = parsedUrl.hostname.replace(/^www\./, "");
+    const fallbackFavicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+
+    let title = domain;
+    let description = "";
+    let image: string | null = null;
+    let favicon = fallbackFavicon;
+
+    try {
+      const response = await fetch(parsedUrl.href, {
+        signal: AbortSignal.timeout(4500),
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        const headHtml = text.slice(0, 150000);
+
+        // Extract og:title or <title>
+        const ogTitleMatch =
+          headHtml.match(
+            /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i
+          );
+        const titleTagMatch = headHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
+
+        if (ogTitleMatch && ogTitleMatch[1]) {
+          title = ogTitleMatch[1].trim();
+        } else if (titleTagMatch && titleTagMatch[1]) {
+          title = titleTagMatch[1].trim();
+        }
+
+        title = title
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&ndash;/g, "–")
+          .replace(/&mdash;/g, "—")
+          .trim();
+
+        // Extract description
+        const ogDescMatch =
+          headHtml.match(
+            /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i
+          );
+
+        if (ogDescMatch && ogDescMatch[1]) {
+          description = ogDescMatch[1]
+            .replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .trim();
+        }
+
+        // Extract og:image
+        const ogImageMatch =
+          headHtml.match(
+            /<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i
+          );
+
+        if (ogImageMatch && ogImageMatch[1]) {
+          try {
+            image = new URL(ogImageMatch[1].trim(), parsedUrl.origin).href;
+          } catch {
+            image = ogImageMatch[1].trim();
+          }
+        }
+
+        // Extract favicon link
+        const iconMatch =
+          headHtml.match(
+            /<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i
+          );
+
+        if (iconMatch && iconMatch[1]) {
+          try {
+            favicon = new URL(iconMatch[1], parsedUrl.origin).href;
+          } catch {
+            favicon = fallbackFavicon;
+          }
+        }
+      }
+    } catch {
+      // Retain fallback values
+    }
+
+    const previewData = {
+      title,
+      description,
+      image,
+      favicon,
+      domain,
+      url: parsedUrl.href,
+    };
+
+    previewCache.set(parsedUrl.href, {
+      data: previewData,
+      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: previewData,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+interface GitHubCacheItem {
+  data: {
+    owner: string;
+    repo: string;
+    fullName: string;
+    stars: number;
+    openIssues: number;
+    forks: number;
+    language: string | null;
+    pushedAt: string | null;
+    defaultBranch: string;
+    description: string | null;
+    htmlUrl: string;
+  };
+  expiresAt: number;
+}
+
+const githubCache = new Map<string, GitHubCacheItem>();
+
+/**
+ * GET /api/v1/projects/github-stats?repoUrl=...
+ * Queries GitHub API for repo statistics with 1-hour in-memory caching to avoid rate-limiting.
+ */
+export const getGitHubStats = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const rawRepoUrl = req.query.repoUrl as string;
+    if (!rawRepoUrl || typeof rawRepoUrl !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_URL",
+          message: "A valid GitHub repoUrl query parameter is required",
+        },
+      });
+    }
+
+    const match = rawRepoUrl.match(
+      /github\.com\/([a-zA-Z0-9_\-\.]+)\/([a-zA-Z0-9_\-\.]+)/i
+    );
+    if (!match) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_GITHUB_URL",
+          message: "URL is not a recognized GitHub repository URL format",
+        },
+      });
+    }
+
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/i, "");
+    const cacheKey = `${owner.toLowerCase()}/${repo.toLowerCase()}`;
+
+    const cached = githubCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.status(200).json({
+        success: true,
+        data: cached.data,
+      });
+    }
+
+    const headers: Record<string, string> = {
+      "User-Agent": "DevDash-App/1.0",
+      Accept: "application/vnd.github.v3+json",
+    };
+
+    if (process.env.GITHUB_TOKEN) {
+      headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+    }
+
+    const response = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      {
+        headers,
+        signal: AbortSignal.timeout(4500),
+      }
+    );
+
+    if (!response.ok) {
+      return res.status(response.status >= 500 ? 502 : response.status).json({
+        success: false,
+        error: {
+          code: "GITHUB_API_ERROR",
+          message: `GitHub API responded with status ${response.status}`,
+        },
+      });
+    }
+
+    const data = (await response.json()) as any;
+    const stats = {
+      owner,
+      repo,
+      fullName: data.full_name || `${owner}/${repo}`,
+      stars: data.stargazers_count ?? 0,
+      openIssues: data.open_issues_count ?? 0,
+      forks: data.forks_count ?? 0,
+      language: data.language ?? null,
+      pushedAt: data.pushed_at ?? null,
+      defaultBranch: data.default_branch || "main",
+      description: data.description ?? null,
+      htmlUrl: data.html_url || `https://github.com/${owner}/${repo}`,
+    };
+
+    githubCache.set(cacheKey, {
+      data: stats,
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: stats,
+    });
+  } catch (error: any) {
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return res.status(504).json({
+        success: false,
+        error: {
+          code: "TIMEOUT",
+          message: "GitHub API request timed out",
+        },
+      });
+    }
+    return next(error);
+  }
+};

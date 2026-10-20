@@ -12,6 +12,8 @@ import {
   getProjectById,
   updateProject,
   deleteProject,
+  getProjectUrlPreview,
+  getGitHubStats,
 } from "../controllers/project.controller";
 
 const router = Router();
@@ -21,6 +23,11 @@ router.use(requireAuth);
 
 router.get("/", validate({ query: queryProjectSchema }), getProjects);
 router.post("/", validate({ body: createProjectSchema }), createProject);
+
+// Metadata & Telemetry endpoints (placed before /:id)
+router.get("/preview", getProjectUrlPreview);
+router.get("/github-stats", getGitHubStats);
+
 router.get("/:id", getProjectById);
 router.put("/:id", validate({ body: updateProjectSchema }), updateProject);
 router.delete("/:id", deleteProject);
