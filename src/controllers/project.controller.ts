@@ -459,6 +459,12 @@ export const getProjectUrlPreview = async (
           ) ||
           headHtml.match(
             /<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i
+          ) ||
+          headHtml.match(
+            /<link[^>]*rel=["']apple-touch-icon["'][^>]*href=["']([^"']+)["']/i
+          ) ||
+          headHtml.match(
+            /<link[^>]*href=["']([^"']+)["'][^>]*rel=["']apple-touch-icon["']/i
           );
 
         if (iconMatch && iconMatch[1]) {
@@ -471,6 +477,26 @@ export const getProjectUrlPreview = async (
       }
     } catch {
       // Retain fallback values
+    }
+
+    // Secondary fallback: Probe static origin favicon paths if not found in HTML
+    if (favicon === fallbackFavicon) {
+      const iconCandidates = ["/icon.svg", "/favicon.svg", "/favicon.ico"];
+      for (const ic of iconCandidates) {
+        try {
+          const probeIconUrl = `${parsedUrl.origin}${ic}`;
+          const probeIconRes = await fetch(probeIconUrl, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(2000),
+          });
+          if (probeIconRes.ok) {
+            favicon = probeIconUrl;
+            break;
+          }
+        } catch {
+          // ignore candidate error
+        }
+      }
     }
 
     // Secondary fallback: Probe standard static OG paths if image not found in HTML
