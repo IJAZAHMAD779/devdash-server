@@ -11,6 +11,7 @@ import noteRoutes from "./routes/note.routes";
 import searchRoutes from "./routes/search.routes";
 import digestRoutes from "./routes/digest.routes";
 import reminderRoutes from "./routes/reminder.routes";
+import aiRoutes from "./routes/ai.routes";
 import { initReminderScheduler } from "./services/reminder-scheduler.service";
 import { errorHandler } from "./middleware/error.middleware";
 
@@ -71,6 +72,9 @@ app.use("/api/v1/digest", digestRoutes);
 
 // Section 11: Task Reminders API
 app.use("/api/v1/reminders", reminderRoutes);
+
+// Section 12: AI Copilot REST API (Groq Qwen Engine)
+app.use("/api/v1/ai", aiRoutes);
 
 // Catch-all 404 for unhandled API routes
 app.use((req: Request, res: Response) => {
