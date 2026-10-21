@@ -24,8 +24,8 @@ export interface AiExecutionResult {
 }
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const PRIMARY_MODEL = process.env.GROQ_MODEL || "qwen-2.5-32b";
-const FALLBACK_MODEL = "qwen-2.5-coder-32b";
+const PRIMARY_MODEL = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+const FALLBACK_MODEL = "openai/gpt-oss-20b";
 
 // Groq / OpenAI compatible Tool Definitions
 const AI_TOOLS = [

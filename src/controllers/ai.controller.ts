@@ -77,7 +77,7 @@ export const getAiStatus = async (
   res: Response
 ) => {
   const isConfigured = Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim().length > 0);
-  const model = process.env.GROQ_MODEL || "qwen-2.5-32b";
+  const model = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
 
   return res.status(200).json({
     success: true,
