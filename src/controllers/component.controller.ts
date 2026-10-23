@@ -9,13 +9,14 @@ import {
 export const getComponents = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.auth!.userId;
-    const { framework, styling, projectId, favorite, search } = req.query;
+    const { framework, styling, projectId, favorite, search, category } = req.query;
 
     const components = await prisma.uIComponent.findMany({
       where: {
         userId,
         ...(framework && { framework: framework as ComponentFramework }),
         ...(styling && { styling: styling as ComponentStyling }),
+        ...(category && { category: String(category) }),
         ...(projectId && { projectId: String(projectId) }),
         ...(favorite !== undefined && { favorite: favorite === "true" }),
         ...(search && {
@@ -76,6 +77,7 @@ export const createComponent = async (req: Request, res: Response, next: NextFun
         styling: (body.styling as ComponentStyling) || "TAILWIND",
         code: body.code,
         previewCode: body.previewCode ?? null,
+        category: body.category || "general",
         tags: body.tags ?? [],
         favorite: body.favorite ?? false,
       },
@@ -197,6 +199,7 @@ export const updateComponent = async (req: Request, res: Response, next: NextFun
         }),
         ...(body.code !== undefined && { code: body.code }),
         ...(body.previewCode !== undefined && { previewCode: body.previewCode }),
+        ...(body.category !== undefined && { category: body.category }),
         ...(body.tags !== undefined && { tags: body.tags }),
         ...(body.projectId !== undefined && { projectId: body.projectId || null }),
         ...(body.favorite !== undefined && { favorite: body.favorite }),

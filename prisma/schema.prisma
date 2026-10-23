@@ -170,6 +170,7 @@ model UIComponent {
   styling     ComponentStyling   @default(TAILWIND)
   code        String             @db.Text
   previewCode String?            @db.Text
+  category    String             @default("general")
   tags        String[]           @default([])
   favorite    Boolean            @default(false)
   createdAt   DateTime           @default(now())
@@ -179,6 +180,7 @@ model UIComponent {
   project     Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([userId, category])
   @@index([userId, framework])
   @@index([projectId])
   @@map("ui_components")

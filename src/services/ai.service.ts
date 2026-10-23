@@ -76,19 +76,27 @@ const AI_TOOLS = [
     type: "function",
     function: {
       name: "create_reminder",
-      description: "Schedule a time-based email reminder. Accurately converts natural language times ('tomorrow at 9am', 'in 3 hours', 'Friday at 2pm') into an ISO timestamp based on the provided current time.",
+      description: "Schedule a time-based email reminder. Accurately converts natural language times ('tomorrow at 9am', 'at 11:00 am', 'in 3 hours', 'Friday at 2pm') into scheduled reminders.",
       parameters: {
         type: "object",
         properties: {
           title: { type: "string", description: "Subject/topic of the reminder" },
           description: { type: "string", description: "Optional notes or instructions for the reminder" },
+          date: {
+            type: "string",
+            description: "Target local date in YYYY-MM-DD format (e.g. '2026-10-24' for tomorrow, or today's date)"
+          },
+          time: {
+            type: "string",
+            description: "Target local time in 24-hour HH:mm format (e.g. '11:00' for 11:00 AM, '09:30' for 9:30 AM, '16:00' for 4:00 PM). Never guess UTC conversion - provide user's requested local time!"
+          },
           remindAt: {
             type: "string",
-            description: "Exact ISO 8601 UTC date-time string when the reminder should trigger (e.g. 2026-10-22T09:00:00.000Z)"
+            description: "Alternative exact ISO 8601 date-time string if date and time are not separated"
           },
           taskId: { type: "string", description: "Optional UUID of an associated task" }
         },
-        required: ["title", "remindAt"]
+        required: ["title"]
       }
     }
   },
@@ -270,7 +278,8 @@ const AI_TOOLS = [
 async function executeTool(
   toolName: string,
   args: Record<string, any>,
-  userId: string
+  userId: string,
+  timezoneOffsetMinutes?: number
 ): Promise<{ result: string; action?: ExecutedAction }> {
   try {
     switch (toolName) {
@@ -322,9 +331,37 @@ async function executeTool(
       }
 
       case "create_reminder": {
-        const remindDate = new Date(args.remindAt);
-        if (isNaN(remindDate.getTime())) {
-          return { result: "Error: Invalid date format provided for remindAt." };
+        let remindDate: Date | null = null;
+
+        if (args.date && args.time) {
+          const [yearStr, monthStr, dayStr] = String(args.date).split("-");
+          const [hoursStr, minutesStr] = String(args.time).split(":");
+          const year = parseInt(yearStr, 10);
+          const month = parseInt(monthStr, 10) - 1;
+          const day = parseInt(dayStr, 10);
+          const hours = parseInt(hoursStr, 10);
+          const minutes = parseInt(minutesStr, 10);
+
+          if (!isNaN(year) && !isNaN(month) && !isNaN(day) && !isNaN(hours) && !isNaN(minutes)) {
+            if (timezoneOffsetMinutes !== undefined && !isNaN(timezoneOffsetMinutes)) {
+              // getTimezoneOffset() is in minutes (e.g. -300 for GMT+5)
+              // Date.UTC(...) + (offset * 60 * 1000) converts user's local time directly to UTC timestamp
+              const utcMillis = Date.UTC(year, month, day, hours, minutes, 0, 0) + (timezoneOffsetMinutes * 60 * 1000);
+              remindDate = new Date(utcMillis);
+            } else {
+              remindDate = new Date(`${args.date}T${args.time}:00`);
+            }
+          }
+        }
+
+        if (!remindDate || isNaN(remindDate.getTime())) {
+          if (args.remindAt) {
+            remindDate = new Date(args.remindAt);
+          }
+        }
+
+        if (!remindDate || isNaN(remindDate.getTime())) {
+          return { result: "Error: Could not calculate a valid reminder date and time." };
         }
 
         const reminder = await prisma.reminder.create({
@@ -717,6 +754,7 @@ export async function runAiCommand(
   userPrompt: string,
   clientTime?: string,
   timezone?: string,
+  timezoneOffsetMinutes?: number,
   history: AiChatMessage[] = []
 ): Promise<AiExecutionResult> {
   const apiKey = process.env.GROQ_API_KEY;
@@ -731,6 +769,13 @@ export async function runAiCommand(
     take: 10
   });
 
+  const now = new Date();
+  let todayYmd = now.toISOString().slice(0, 10);
+  if (timezoneOffsetMinutes !== undefined && !isNaN(timezoneOffsetMinutes)) {
+    const localNow = new Date(now.getTime() - timezoneOffsetMinutes * 60 * 1000);
+    todayYmd = localNow.toISOString().slice(0, 10);
+  }
+
   const nowString = clientTime || new Date().toISOString();
   const tzString = timezone || "UTC";
 
@@ -739,6 +784,7 @@ You are embedded directly inside DevDash, a personal developer workspace platfor
 
 CURRENT CONTEXT:
 - Current Local Time: ${nowString} (${tzString})
+- Today's Date: ${todayYmd}
 - Available Projects in Workspace:
 ${userProjects.length > 0 ? userProjects.map(p => `  * ${p.title} (${p.status})`).join("\n") : "  (No projects yet)"}
 
@@ -749,8 +795,9 @@ CORE CAPABILITIES & PERMISSIONS:
    - For auto-generating notes for imported bookmarks: invoke 'enrich_bookmarks'.
    - For updating tasks (status, priority, due date): invoke 'update_task'.
    - For updating notes: invoke 'update_note'.
-3. For dates and relative times (e.g. "tomorrow at 9:00 AM", "in 2 hours", "next Monday"):
-   - Always calculate the exact ISO 8601 UTC timestamp from the Current Local Time: ${nowString}.
+3. For scheduling reminders:
+   - Extract the user's requested date (YYYY-MM-DD) and 24-hour time (HH:mm) directly into 'date' and 'time' parameters of 'create_reminder' (e.g. date: "${todayYmd}", time: "11:00" for 11:00 AM).
+   - DO NOT attempt mental UTC subtraction; the server will perform exact mathematical UTC conversion using the user's timezone offset.
 4. Be concise, developer-centric, professional, and clear. Avoid fluffy conversational filler.
 5. If the user asks you to do something actionable, invoke the appropriate tool.
 6. FORMATTING: You are rendered in a compact floating chat window. When listing projects, tasks, or resources, use clean structured bulleted lists with bold titles and status indicators (e.g., "- **DevDash** (🟢 \`IN_PROGRESS\`) - Next.js, TypeScript"). Do NOT output wide multi-column markdown tables, as they cause horizontal distortion in narrow chat interfaces.`;
@@ -792,7 +839,7 @@ CORE CAPABILITIES & PERMISSIONS:
         args = {};
       }
 
-      const { result, action } = await executeTool(toolName, args, userId);
+      const { result, action } = await executeTool(toolName, args, userId, timezoneOffsetMinutes);
       if (action) executedActions.push(action);
 
       // Append tool result

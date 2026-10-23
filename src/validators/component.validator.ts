@@ -31,6 +31,7 @@ export const createComponentSchema = z.object({
     .string({ required_error: "Component code is required" })
     .min(1, "Component code cannot be empty"),
   previewCode: z.string().trim().optional().nullable(),
+  category: z.string().trim().default("general"),
   tags: z.array(z.string().trim()).default([]),
   projectId: z.string().uuid("Project ID must be a valid UUID").optional().nullable(),
   favorite: z.boolean().default(false),
@@ -43,6 +44,7 @@ export const updateComponentSchema = z.object({
   styling: ComponentStylingEnum.optional(),
   code: z.string().min(1).optional(),
   previewCode: z.string().trim().optional().nullable(),
+  category: z.string().trim().optional(),
   tags: z.array(z.string().trim()).optional(),
   projectId: z.string().uuid("Project ID must be a valid UUID").optional().nullable(),
   favorite: z.boolean().optional(),
@@ -51,6 +53,7 @@ export const updateComponentSchema = z.object({
 export const queryComponentSchema = z.object({
   framework: ComponentFrameworkEnum.optional(),
   styling: ComponentStylingEnum.optional(),
+  category: z.string().trim().optional(),
   projectId: z.string().optional(),
   favorite: z.enum(["true", "false"]).optional(),
   search: z.string().trim().optional(),

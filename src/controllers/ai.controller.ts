@@ -6,6 +6,7 @@ const aiCommandSchema = z.object({
   message: z.string().min(1, "Message cannot be empty").max(2000),
   clientTime: z.string().optional(),
   timezone: z.string().optional(),
+  timezoneOffsetMinutes: z.number().optional(),
   history: z
     .array(
       z.object({
@@ -36,6 +37,7 @@ export const executeAiCommand = async (
       validated.message,
       validated.clientTime,
       validated.timezone,
+      validated.timezoneOffsetMinutes,
       validated.history as any
     );
 
