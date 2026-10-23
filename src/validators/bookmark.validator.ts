@@ -37,6 +37,13 @@ export const batchCreateBookmarkSchema = z.object({
     .max(250, "Batch size limit is 250"),
 });
 
+export const batchEnrichBookmarkSchema = z.object({
+  category: z.string().optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+  bookmarkIds: z.array(z.string().uuid()).optional(),
+});
+
 export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
 export type UpdateBookmarkInput = z.infer<typeof updateBookmarkSchema>;
 export type BatchCreateBookmarkInput = z.infer<typeof batchCreateBookmarkSchema>;
+export type BatchEnrichBookmarkInput = z.infer<typeof batchEnrichBookmarkSchema>;

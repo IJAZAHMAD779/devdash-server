@@ -6,7 +6,9 @@ import {
   updateBookmarkSchema,
   bookmarkQuerySchema,
   batchCreateBookmarkSchema,
+  batchEnrichBookmarkSchema,
 } from "../validators/bookmark.validator";
+import { enrichBookmarksBatch } from "../services/ai.service";
 
 /**
  * GET /api/v1/bookmarks
@@ -533,6 +535,70 @@ export const toggleBookmarkFavorite = async (
     return res.status(200).json({
       success: true,
       data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/bookmarks/enrich-batch
+ * Batch auto-generates developer notes and tags for bookmarks lacking notes.
+ */
+export const batchEnrichBookmarks = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const body = batchEnrichBookmarkSchema.parse(req.body);
+
+    const result = await enrichBookmarksBatch(userId, body);
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/bookmarks/:id/enrich
+ * Generates developer note and tags for a single bookmark.
+ */
+export const enrichBookmarkById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const { id } = req.params;
+
+    const existing = await prisma.bookmark.findFirst({
+      where: { id, userId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "BOOKMARK_NOT_FOUND",
+          message: "Bookmark not found",
+        },
+      });
+    }
+
+    const result = await enrichBookmarksBatch(userId, {
+      bookmarkIds: [id],
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result.bookmarks[0] || existing,
     });
   } catch (error) {
     next(error);
