@@ -5,6 +5,7 @@ import {
   createBookmarkSchema,
   updateBookmarkSchema,
   bookmarkQuerySchema,
+  batchCreateBookmarkSchema,
 } from "../validators/bookmark.validator";
 
 /**
@@ -23,6 +24,10 @@ export const getBookmarks = async (
     const whereClause: any = {
       userId,
     };
+
+    if (query.favorite !== undefined) {
+      whereClause.favorite = query.favorite;
+    }
 
     if (query.category && query.category.toLowerCase() !== "all") {
       whereClause.category = {
@@ -106,6 +111,7 @@ export const createBookmark = async (
       tags: input.tags,
       notes: input.notes || null,
       projectId: input.projectId || null,
+      favorite: input.favorite ?? false,
     };
 
     const bookmark = await prisma.bookmark.create({
@@ -230,6 +236,7 @@ export const updateBookmark = async (
       ...(input.tags !== undefined && { tags: input.tags }),
       ...(input.notes !== undefined && { notes: input.notes }),
       ...(input.projectId !== undefined && { projectId: input.projectId }),
+      ...(input.favorite !== undefined && { favorite: input.favorite }),
     };
 
     const updated = await prisma.bookmark.update({
@@ -429,6 +436,103 @@ export const deleteBookmark = async (
     return res.status(200).json({
       success: true,
       data: { id, message: "Bookmark deleted successfully" },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/bookmarks/batch
+ * Batch creates up to 250 bookmarks (e.g. from Chrome HTML import) scoped to req.auth.userId.
+ */
+export const batchCreateBookmarks = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const { bookmarks } = batchCreateBookmarkSchema.parse(req.body);
+
+    const dataToInsert: Prisma.BookmarkCreateManyInput[] = bookmarks.map((b) => ({
+      userId,
+      title: b.title.trim(),
+      url: b.url.trim(),
+      category: (b.category || "tools").trim().toLowerCase(),
+      tags: b.tags || [],
+      notes: b.notes || null,
+      projectId: b.projectId || null,
+      favorite: b.favorite ?? false,
+    }));
+
+    const result = await prisma.bookmark.createMany({
+      data: dataToInsert,
+    });
+
+    // Record single aggregated activity log entry
+    await prisma.activityLog.create({
+      data: {
+        userId,
+        entityType: "BOOKMARK",
+        entityId: "batch",
+        action: "CREATED",
+        title: `Imported ${result.count} bookmarks from browser`,
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        count: result.count,
+        message: `Successfully imported ${result.count} bookmarks`,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PATCH /api/v1/bookmarks/:id/favorite
+ * Toggles the favorite status of a bookmark scoped to req.auth.userId.
+ */
+export const toggleBookmarkFavorite = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const { id } = req.params;
+
+    const existing = await prisma.bookmark.findFirst({
+      where: { id, userId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: "BOOKMARK_NOT_FOUND",
+          message: "Bookmark not found",
+        },
+      });
+    }
+
+    const updated = await prisma.bookmark.update({
+      where: { id },
+      data: { favorite: !existing.favorite },
+      include: {
+        project: {
+          select: { id: true, title: true },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: updated,
     });
   } catch (error) {
     next(error);

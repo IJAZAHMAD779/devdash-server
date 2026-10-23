@@ -193,6 +193,7 @@ model Bookmark {
   category  String           @default("tools")
   tags      String[]         @default([])
   notes     String?          @db.Text
+  favorite  Boolean          @default(false)
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
@@ -201,6 +202,7 @@ model Bookmark {
 
   @@index([userId])
   @@index([userId, category])
+  @@index([userId, favorite])
   @@index([projectId])
   @@map("bookmarks")
 }

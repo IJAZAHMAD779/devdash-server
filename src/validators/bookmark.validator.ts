@@ -12,6 +12,7 @@ export const createBookmarkSchema = z.object({
   tags: z.array(z.string()).default([]),
   notes: z.string().optional().nullable(),
   projectId: z.string().uuid("Invalid project ID").optional().nullable(),
+  favorite: z.boolean().default(false).optional(),
 });
 
 export const updateBookmarkSchema = createBookmarkSchema.partial();
@@ -21,7 +22,21 @@ export const bookmarkQuerySchema = z.object({
   projectId: z.string().uuid().optional(),
   tag: z.string().optional(),
   search: z.string().optional(),
+  favorite: z
+    .preprocess((val) => {
+      if (val === "true" || val === true) return true;
+      if (val === "false" || val === false) return false;
+      return undefined;
+    }, z.boolean().optional()),
+});
+
+export const batchCreateBookmarkSchema = z.object({
+  bookmarks: z
+    .array(createBookmarkSchema)
+    .min(1, "At least one bookmark is required")
+    .max(250, "Batch size limit is 250"),
 });
 
 export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
 export type UpdateBookmarkInput = z.infer<typeof updateBookmarkSchema>;
+export type BatchCreateBookmarkInput = z.infer<typeof batchCreateBookmarkSchema>;
