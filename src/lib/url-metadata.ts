@@ -75,6 +75,53 @@ function inferCategory(url: string, title: string, description: string, keywords
 }
 
 /**
+ * Format raw repository names (e.g. "fluentui-emoji" -> "Fluent UI Emoji" or "Twemoji")
+ */
+export function formatRepoTitle(repo: string): string {
+  if (!repo) return "";
+  // If already mixed case (e.g. "Twemoji", "Material-UI"), keep capitalization
+  if (/[a-z]/.test(repo) && /[A-Z]/.test(repo)) {
+    return repo.replace(/[-_]/g, " ").trim();
+  }
+  return repo
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .replace(/\bUi\b/g, "UI")
+    .replace(/\bJs\b/g, "JS")
+    .replace(/\bTs\b/g, "TS")
+    .replace(/\bCss\b/g, "CSS")
+    .replace(/\bHtml\b/g, "HTML")
+    .trim();
+}
+
+/**
+ * Extract owner and repo from a GitHub URL
+ */
+export function parseGitHubRepo(parsedUrl: URL): { owner: string; repo: string } | null {
+  const isGitHub = /(?:^|\.)github\.com$/i.test(parsedUrl.hostname);
+  if (!isGitHub) return null;
+
+  const pathSegments = parsedUrl.pathname.split("/").filter(Boolean);
+  if (pathSegments.length < 2) return null;
+
+  const reserved = new Set([
+    "about", "pricing", "features", "explore", "topics", "trending", "collections",
+    "events", "readme", "marketplace", "login", "join", "security", "customer-stories",
+    "enterprise", "solutions", "settings", "notifications", "search", "pulls", "issues",
+    "stars", "sponsors", "site", "orgs"
+  ]);
+
+  const owner = pathSegments[0];
+  const repo = pathSegments[1].replace(/\.git$/i, "");
+
+  if (reserved.has(owner.toLowerCase()) || reserved.has(repo.toLowerCase())) {
+    return null;
+  }
+
+  return { owner, repo };
+}
+
+/**
  * Fetch and extract rich metadata from a URL with timeout and fallback protection
  */
 export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promise<ScrapedUrlMetadata> {
@@ -113,6 +160,45 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
   const domain = parsedUrl.hostname.replace(/^www\./, "");
   const fallbackFavicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
 
+  // Check if this is a GitHub repository URL
+  const ghRepo = parseGitHubRepo(parsedUrl);
+  if (ghRepo) {
+    const { owner, repo } = ghRepo;
+    const formattedTitle = formatRepoTitle(repo);
+    const ghFavicon = "https://github.githubassets.com/favicons/favicon.svg";
+
+    // 1. First attempt: Query GitHub's public API (unauthenticated 60 req/hr)
+    try {
+      const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+        signal: AbortSignal.timeout(Math.min(timeoutMs, 2500)),
+        headers: {
+          "User-Agent": "DevDash-Workspace/1.0",
+          Accept: "application/vnd.github.v3+json"
+        }
+      });
+
+      if (ghRes.ok) {
+        const ghData: any = await ghRes.json();
+        const apiTitle = ghData.name ? formatRepoTitle(ghData.name) : formattedTitle;
+        const apiDesc = (ghData.description || "").trim();
+        const topics = Array.isArray(ghData.topics) ? ghData.topics : [];
+        const language = ghData.language ? [ghData.language.toLowerCase()] : [];
+
+        return {
+          title: apiTitle || formattedTitle,
+          description: apiDesc || `Official open-source ${formattedTitle} repository by ${owner} on GitHub.`,
+          favicon: ghFavicon,
+          domain: "github.com",
+          url: parsedUrl.href,
+          suggestedCategory: "repo",
+          keywords: Array.from(new Set(["repo", "github", "open-source", repo.toLowerCase(), owner.toLowerCase(), ...language, ...topics]))
+        };
+      }
+    } catch {
+      // API call timed out or rate limited, proceed to HTML scrape
+    }
+  }
+
   let title = domain;
   let description = "";
   let favicon = fallbackFavicon;
@@ -130,8 +216,8 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
 
     if (res.ok) {
       const htmlText = await res.text();
-      // Read first 160KB where head and early meta tags live
-      const headHtml = htmlText.slice(0, 160000);
+      // Read first 200KB where head and early meta tags live
+      const headHtml = htmlText.slice(0, 200000);
 
       // Title extraction (og:title, twitter:title, then <title>)
       const ogTitle =
@@ -147,6 +233,16 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
         title = decodeHtmlEntities(htmlTitle);
       }
 
+      // If GitHub, extract the actual repo title from "GitHub - owner/repo: ..."
+      if (ghRepo) {
+        const repoTitleMatch = title.match(/^(?:GitHub\s*-\s*)?[^/:]+\/([^/:]+)/i);
+        if (repoTitleMatch && repoTitleMatch[1]) {
+          title = formatRepoTitle(repoTitleMatch[1].trim());
+        } else if (!title || title.toLowerCase() === "github" || title.toLowerCase() === "github.com") {
+          title = formatRepoTitle(ghRepo.repo);
+        }
+      }
+
       // Description extraction (og:description, description, twitter:description)
       const descMatch =
         headHtml.match(/<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i)?.[1] ||
@@ -155,7 +251,14 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
         headHtml.match(/<meta[^>]*name=["']twitter:description["'][^>]*content=["']([^"']+)["']/i)?.[1];
 
       if (descMatch) {
-        description = decodeHtmlEntities(descMatch);
+        let cleanDesc = decodeHtmlEntities(descMatch);
+        // Strip GitHub boilerplates from description
+        if (ghRepo) {
+          cleanDesc = cleanDesc
+            .replace(/\s*\.?\s*Contribute to [^\s]+ development by creating an account on GitHub\.?/i, "")
+            .trim();
+        }
+        description = cleanDesc;
       }
 
       // Keywords extraction
@@ -165,7 +268,7 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
         keywords.push(
           ...decoded
             .split(",")
-            .map(k => k.trim().toLowerCase())
+            .map((k) => k.trim().toLowerCase())
             .filter(Boolean)
         );
       }
@@ -184,7 +287,28 @@ export async function fetchUrlMetadata(rawUrl: string, timeoutMs = 3500): Promis
       }
     }
   } catch {
-    // Graceful fallback to domain
+    // Graceful fallback to domain or repository info
+  }
+
+  // Handle repository fallbacks if description was empty or fetch failed
+  if (ghRepo) {
+    const formattedTitle = formatRepoTitle(ghRepo.repo);
+    if (!title || title.toLowerCase() === "github" || title.toLowerCase() === "github.com") {
+      title = formattedTitle;
+    }
+    if (!description || description.length < 5) {
+      description = `Official open-source ${formattedTitle} repository by ${ghRepo.owner} on GitHub.`;
+    }
+    favicon = "https://github.githubassets.com/favicons/favicon.svg";
+    return {
+      title,
+      description,
+      favicon,
+      domain: "github.com",
+      url: parsedUrl.href,
+      suggestedCategory: "repo",
+      keywords: Array.from(new Set(["repo", "github", "open-source", ghRepo.repo.toLowerCase(), ghRepo.owner.toLowerCase(), ...keywords]))
+    };
   }
 
   const suggestedCategory = inferCategory(parsedUrl.href, title, description, keywords);

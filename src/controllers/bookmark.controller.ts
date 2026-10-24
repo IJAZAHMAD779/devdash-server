@@ -7,6 +7,7 @@ import {
   bookmarkQuerySchema,
   batchCreateBookmarkSchema,
   batchEnrichBookmarkSchema,
+  clearBookmarkNotesSchema,
 } from "../validators/bookmark.validator";
 import { enrichBookmarksBatch } from "../services/ai.service";
 import { fetchUrlMetadata } from "../lib/url-metadata";
@@ -521,3 +522,64 @@ export const enrichBookmarkById = async (
     next(error);
   }
 };
+
+/**
+ * POST /api/v1/bookmarks/clear-notes
+ * Clear notes on bookmarks all at once or scoped to a category or list of bookmarkIds.
+ * Multi-tenant safe: Strictly scoped to req.auth.userId.
+ */
+export const clearBookmarkNotes = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const body = clearBookmarkNotesSchema.parse(req.body);
+
+    const whereClause: Prisma.BookmarkWhereInput = {
+      userId,
+    };
+
+    if (body.bookmarkIds && body.bookmarkIds.length > 0) {
+      whereClause.id = { in: body.bookmarkIds };
+    } else if (body.category && body.category.toLowerCase() !== "all") {
+      whereClause.category = {
+        equals: body.category,
+        mode: "insensitive",
+      };
+    }
+
+    // Only target bookmarks that currently have notes
+    whereClause.notes = {
+      not: null,
+    };
+
+    const result = await prisma.bookmark.updateMany({
+      where: whereClause,
+      data: {
+        notes: null,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId,
+        entityType: "BOOKMARK",
+        entityId: "bulk-clear-notes",
+        action: "UPDATED",
+        title: `Cleared developer notes on ${result.count} bookmarks`,
+      },
+    }).catch(() => null);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        clearedCount: result.count,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

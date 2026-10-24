@@ -20,6 +20,7 @@ export interface ExecutedAction {
     | "QUERY"
     | "UPDATE_BOOKMARK"
     | "ENRICH_BOOKMARKS"
+    | "CLEAR_BOOKMARK_NOTES"
     | "UPDATE_TASK"
     | "UPDATE_NOTE";
   title: string;
@@ -227,6 +228,22 @@ const AI_TOOLS = [
           limit: {
             type: "number",
             description: "Max number of bookmarks to enrich in this run (default 15, max 30)"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "clear_bookmark_notes",
+      description: "Clear or remove developer notes from bookmarks all at once or for a specific category (e.g. 'repo', 'tools', 'design', or 'all'). Sets notes to null so they can be re-generated.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            description: "Optional category filter (e.g. 'repo', 'tools', 'design', or 'all'). If omitted or 'all', clears notes across all bookmarks."
           }
         }
       }
@@ -767,6 +784,41 @@ async function executeTool(
         };
       }
 
+      case "clear_bookmark_notes": {
+        const whereClause: any = {
+          userId,
+          notes: { not: null }
+        };
+        if (args.category && args.category.toLowerCase() !== "all") {
+          whereClause.category = { equals: args.category, mode: "insensitive" };
+        }
+
+        const result = await prisma.bookmark.updateMany({
+          where: whereClause,
+          data: { notes: null }
+        });
+
+        await prisma.activityLog.create({
+          data: {
+            userId,
+            entityType: "BOOKMARK",
+            entityId: "bulk-clear-notes",
+            action: "UPDATED",
+            title: `AI cleared developer notes on ${result.count} bookmarks`
+          }
+        }).catch(() => null);
+
+        return {
+          result: `Successfully cleared developer notes from ${result.count} bookmarks${args.category ? ` in category "${args.category}"` : ""}.`,
+          action: {
+            type: "CLEAR_BOOKMARK_NOTES",
+            title: `Cleared Notes on ${result.count} Bookmarks`,
+            details: { clearedCount: result.count, category: args.category || "all" },
+            url: "/resources"
+          }
+        };
+      }
+
       case "update_task": {
         let task: any = null;
         if (args.taskId) {
@@ -1155,13 +1207,14 @@ export async function enrichBookmarksBatch(
 ): Promise<{ enrichedCount: number; bookmarks: any[] }> {
   const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 50);
 
-  // Target bookmarks with no notes OR with the legacy boilerplate template
+  // Target bookmarks with no notes OR with legacy template/fallback notes
   const whereClause: any = {
     userId,
     OR: [
       { notes: null },
       { notes: "" },
-      { notes: { startsWith: "Developer bookmark for" } }
+      { notes: { startsWith: "Developer bookmark for" } },
+      { notes: { contains: "Web resource and developer utility." } }
     ]
   };
 
@@ -1191,9 +1244,28 @@ export async function enrichBookmarksBatch(
   const targetsWithMeta = targets.map((b, idx) => {
     const metaRes = metadataResults[idx];
     const meta = metaRes.status === "fulfilled" ? metaRes.value : null;
+
+    let finalTitle = b.title;
+    // Replace generic or URL titles with rich scraped/repo title
+    if (
+      !finalTitle ||
+      finalTitle.toLowerCase() === "github" ||
+      finalTitle.toLowerCase() === "github.com" ||
+      finalTitle.toLowerCase() === "unknown resource" ||
+      finalTitle === b.url ||
+      finalTitle.startsWith("http://") ||
+      finalTitle.startsWith("https://")
+    ) {
+      if (meta?.title && meta.title.toLowerCase() !== "github" && meta.title.toLowerCase() !== "github.com") {
+        finalTitle = meta.title;
+      }
+    } else if (meta?.title && meta.title !== meta.domain && b.title.toLowerCase() === "github") {
+      finalTitle = meta.title;
+    }
+
     return {
       ...b,
-      title: meta?.title && meta.title !== meta.domain ? meta.title : b.title,
+      title: finalTitle,
       pageDescription: meta?.description || "",
       suggestedCategory: meta?.suggestedCategory || b.category || "tools"
     };
@@ -1217,10 +1289,13 @@ export async function enrichBookmarksBatch(
     let tagsList = Array.isArray(existingResult?.tags) ? existingResult.tags : [];
     let finalCategory = existingResult?.category || b.category || b.suggestedCategory || "tools";
 
-    // If Groq didn't return a note, use the scraped page description or smart domain summary
+    // If Groq didn't return a note, use the scraped page description or smart category summary
     if (!noteText) {
-      if (b.pageDescription && b.pageDescription.length > 10) {
+      if (b.pageDescription && b.pageDescription.length > 8) {
         noteText = b.pageDescription;
+      } else if (finalCategory === "repo" || b.url.includes("github.com") || b.url.includes("gitlab.com")) {
+        const repoName = (b.title && b.title.toLowerCase() !== "github") ? b.title : "repository";
+        noteText = `Official open-source ${repoName} repository on GitHub.`;
       } else {
         let domain = "";
         try {
@@ -1228,7 +1303,7 @@ export async function enrichBookmarksBatch(
         } catch {
           domain = "web resource";
         }
-        noteText = `${b.title || domain} - Web resource and developer utility.`;
+        noteText = `${b.title || domain} - Developer resource and utility.`;
       }
       tagsList = [finalCategory, (b.title || "").split(" ")[0].toLowerCase()].filter(Boolean);
     }

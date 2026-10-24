@@ -43,7 +43,14 @@ export const batchEnrichBookmarkSchema = z.object({
   bookmarkIds: z.array(z.string().uuid()).optional(),
 });
 
+export const clearBookmarkNotesSchema = z.object({
+  category: z.string().optional(),
+  bookmarkIds: z.array(z.string().uuid()).optional(),
+});
+
 export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
 export type UpdateBookmarkInput = z.infer<typeof updateBookmarkSchema>;
 export type BatchCreateBookmarkInput = z.infer<typeof batchCreateBookmarkSchema>;
 export type BatchEnrichBookmarkInput = z.infer<typeof batchEnrichBookmarkSchema>;
+export type ClearBookmarkNotesInput = z.infer<typeof clearBookmarkNotesSchema>;
+
