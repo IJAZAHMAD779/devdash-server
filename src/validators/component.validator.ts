@@ -59,6 +59,26 @@ export const queryComponentSchema = z.object({
   search: z.string().trim().optional(),
 });
 
+export const synthesizeComponentSchema = z.object({
+  code: z
+    .string({ required_error: "Component code is required to synthesize" })
+    .min(5, "Code snippet is too short to analyze"),
+  targetFramework: z.enum(["REACT", "NEXTJS", "HTML_CSS"]).optional(),
+  styling: z.enum(["TAILWIND", "VANILLA_CSS"]).optional(),
+});
+
+export const generateComponentSchema = z.object({
+  prompt: z
+    .string({ required_error: "Component prompt is required" })
+    .min(3, "Prompt must be at least 3 characters"),
+  category: z.string().trim().optional(),
+  framework: z.enum(["REACT", "NEXTJS", "HTML_CSS"]).optional(),
+  styling: z.enum(["TAILWIND", "VANILLA_CSS"]).optional(),
+});
+
 export type CreateComponentInput = z.infer<typeof createComponentSchema>;
 export type UpdateComponentInput = z.infer<typeof updateComponentSchema>;
 export type QueryComponentInput = z.infer<typeof queryComponentSchema>;
+export type SynthesizeComponentInput = z.infer<typeof synthesizeComponentSchema>;
+export type GenerateComponentInput = z.infer<typeof generateComponentSchema>;
+
