@@ -8,6 +8,8 @@ import {
   batchCreateBookmarkSchema,
   batchEnrichBookmarkSchema,
   clearBookmarkNotesSchema,
+  batchMoveBookmarksSchema,
+  batchDeleteBookmarksSchema,
 } from "../validators/bookmark.validator";
 import { enrichBookmarksBatch } from "../services/ai.service";
 import { fetchUrlMetadata } from "../lib/url-metadata";
@@ -576,6 +578,121 @@ export const clearBookmarkNotes = async (
       success: true,
       data: {
         clearedCount: result.count,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/bookmarks/batch-move
+ * Moves multiple bookmarks to an existing or new category and optionally updates project.
+ * Multi-tenant safe: Strictly scoped to req.auth.userId.
+ */
+export const batchMoveBookmarks = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const body = batchMoveBookmarksSchema.parse(req.body);
+
+    const cleanCategory = body.category
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "-")
+      .replace(/-+/g, "-");
+
+    // If projectId is provided and not null, verify ownership
+    if (body.projectId) {
+      const project = await prisma.project.findFirst({
+        where: { id: body.projectId, userId },
+      });
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: "PROJECT_NOT_FOUND",
+            message: "Target project not found",
+          },
+        });
+      }
+    }
+
+    const data: Prisma.BookmarkUncheckedUpdateManyInput = {
+      category: cleanCategory,
+    };
+    if (body.projectId !== undefined) {
+      data.projectId = body.projectId;
+    }
+
+    const result = await prisma.bookmark.updateMany({
+      where: {
+        id: { in: body.bookmarkIds },
+        userId,
+      },
+      data,
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId,
+        entityType: "BOOKMARK",
+        entityId: "bulk-move",
+        action: "UPDATED",
+        title: `Moved ${result.count} bookmarks to category '${cleanCategory}'`,
+      },
+    }).catch(() => null);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        movedCount: result.count,
+        category: cleanCategory,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/v1/bookmarks/batch-delete
+ * Bulk deletes multiple bookmarks.
+ * Multi-tenant safe: Strictly scoped to req.auth.userId.
+ */
+export const batchDeleteBookmarks = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.auth!.userId;
+    const body = batchDeleteBookmarksSchema.parse(req.body);
+
+    const result = await prisma.bookmark.deleteMany({
+      where: {
+        id: { in: body.bookmarkIds },
+        userId,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId,
+        entityType: "BOOKMARK",
+        entityId: "bulk-delete",
+        action: "DELETED",
+        title: `Deleted ${result.count} bookmarks`,
+      },
+    }).catch(() => null);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        deletedCount: result.count,
       },
     });
   } catch (error) {

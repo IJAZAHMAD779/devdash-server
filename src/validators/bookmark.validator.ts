@@ -48,9 +48,21 @@ export const clearBookmarkNotesSchema = z.object({
   bookmarkIds: z.array(z.string().uuid()).optional(),
 });
 
+export const batchMoveBookmarksSchema = z.object({
+  bookmarkIds: z.array(z.string().uuid()).min(1, "At least one bookmark is required"),
+  category: z.string().min(1, "Category cannot be empty").max(50),
+  projectId: z.string().uuid("Invalid project ID").optional().nullable(),
+});
+
+export const batchDeleteBookmarksSchema = z.object({
+  bookmarkIds: z.array(z.string().uuid()).min(1, "At least one bookmark is required"),
+});
+
 export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
 export type UpdateBookmarkInput = z.infer<typeof updateBookmarkSchema>;
 export type BatchCreateBookmarkInput = z.infer<typeof batchCreateBookmarkSchema>;
 export type BatchEnrichBookmarkInput = z.infer<typeof batchEnrichBookmarkSchema>;
 export type ClearBookmarkNotesInput = z.infer<typeof clearBookmarkNotesSchema>;
+export type BatchMoveBookmarksInput = z.infer<typeof batchMoveBookmarksSchema>;
+export type BatchDeleteBookmarksInput = z.infer<typeof batchDeleteBookmarksSchema>;
 

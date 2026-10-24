@@ -8,6 +8,8 @@ import {
   batchCreateBookmarkSchema,
   batchEnrichBookmarkSchema,
   clearBookmarkNotesSchema,
+  batchMoveBookmarksSchema,
+  batchDeleteBookmarksSchema,
 } from "../validators/bookmark.validator";
 import {
   getBookmarks,
@@ -21,6 +23,8 @@ import {
   batchEnrichBookmarks,
   enrichBookmarkById,
   clearBookmarkNotes,
+  batchMoveBookmarks,
+  batchDeleteBookmarks,
 } from "../controllers/bookmark.controller";
 
 const router = Router();
@@ -31,6 +35,8 @@ router.use(requireAuth);
 router.get("/", validate({ query: bookmarkQuerySchema }), getBookmarks);
 router.post("/", validate({ body: createBookmarkSchema }), createBookmark);
 router.post("/batch", validate({ body: batchCreateBookmarkSchema }), batchCreateBookmarks);
+router.post("/batch-move", validate({ body: batchMoveBookmarksSchema }), batchMoveBookmarks);
+router.post("/batch-delete", validate({ body: batchDeleteBookmarksSchema }), batchDeleteBookmarks);
 router.post("/enrich-batch", validate({ body: batchEnrichBookmarkSchema }), batchEnrichBookmarks);
 router.post("/clear-notes", validate({ body: clearBookmarkNotesSchema }), clearBookmarkNotes);
 router.get("/preview", getBookmarkPreview);
