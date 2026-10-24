@@ -173,6 +173,10 @@ model UIComponent {
   category    String             @default("general")
   tags        String[]           @default([])
   favorite    Boolean            @default(false)
+  aiAgentPrompt String?          @db.Text
+  howToUse    String?            @db.Text
+  dependencies String[]          @default([])
+  propsSchema Json?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 

@@ -35,6 +35,10 @@ export const createComponentSchema = z.object({
   tags: z.array(z.string().trim()).default([]),
   projectId: z.string().uuid("Project ID must be a valid UUID").optional().nullable(),
   favorite: z.boolean().default(false),
+  aiAgentPrompt: z.string().trim().optional().nullable(),
+  howToUse: z.string().trim().optional().nullable(),
+  dependencies: z.array(z.string().trim()).default([]).optional(),
+  propsSchema: z.any().optional().nullable(),
 });
 
 export const updateComponentSchema = z.object({
@@ -48,6 +52,10 @@ export const updateComponentSchema = z.object({
   tags: z.array(z.string().trim()).optional(),
   projectId: z.string().uuid("Project ID must be a valid UUID").optional().nullable(),
   favorite: z.boolean().optional(),
+  aiAgentPrompt: z.string().trim().optional().nullable(),
+  howToUse: z.string().trim().optional().nullable(),
+  dependencies: z.array(z.string().trim()).optional(),
+  propsSchema: z.any().optional().nullable(),
 });
 
 export const queryComponentSchema = z.object({

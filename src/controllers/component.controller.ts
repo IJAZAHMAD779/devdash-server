@@ -80,6 +80,10 @@ export const createComponent = async (req: Request, res: Response, next: NextFun
         category: body.category || "general",
         tags: body.tags ?? [],
         favorite: body.favorite ?? false,
+        aiAgentPrompt: body.aiAgentPrompt ?? null,
+        howToUse: body.howToUse ?? null,
+        dependencies: body.dependencies ?? [],
+        propsSchema: body.propsSchema ?? undefined,
       },
       include: {
         project: {
@@ -203,6 +207,10 @@ export const updateComponent = async (req: Request, res: Response, next: NextFun
         ...(body.tags !== undefined && { tags: body.tags }),
         ...(body.projectId !== undefined && { projectId: body.projectId || null }),
         ...(body.favorite !== undefined && { favorite: body.favorite }),
+        ...(body.aiAgentPrompt !== undefined && { aiAgentPrompt: body.aiAgentPrompt }),
+        ...(body.howToUse !== undefined && { howToUse: body.howToUse }),
+        ...(body.dependencies !== undefined && { dependencies: body.dependencies }),
+        ...(body.propsSchema !== undefined && { propsSchema: body.propsSchema }),
       },
       include: {
         project: {
