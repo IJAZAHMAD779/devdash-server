@@ -9,6 +9,7 @@ import {
   batchEnrichBookmarkSchema,
 } from "../validators/bookmark.validator";
 import { enrichBookmarksBatch } from "../services/ai.service";
+import { fetchUrlMetadata } from "../lib/url-metadata";
 
 /**
  * GET /api/v1/bookmarks
@@ -105,13 +106,34 @@ export const createBookmark = async (
       }
     }
 
+    let finalTitle = input.title;
+    let finalCategory = (input.category || "tools").trim().toLowerCase();
+    let finalNotes = input.notes || null;
+
+    if (!finalNotes || finalTitle === input.url) {
+      try {
+        const meta = await fetchUrlMetadata(input.url, 2500);
+        if (finalTitle === input.url && meta.title && meta.title !== meta.domain) {
+          finalTitle = meta.title;
+        }
+        if ((!input.category || input.category === "tools") && meta.suggestedCategory && meta.suggestedCategory !== "tools") {
+          finalCategory = meta.suggestedCategory;
+        }
+        if (!finalNotes && meta.description) {
+          finalNotes = meta.description;
+        }
+      } catch {
+        // preserve input defaults
+      }
+    }
+
     const createData: Prisma.BookmarkUncheckedCreateInput = {
       userId,
-      title: input.title,
+      title: finalTitle,
       url: input.url,
-      category: (input.category || "tools").trim().toLowerCase(),
+      category: finalCategory,
       tags: input.tags,
-      notes: input.notes || null,
+      notes: finalNotes,
       projectId: input.projectId || null,
       favorite: input.favorite ?? false,
     };
@@ -262,7 +284,7 @@ export const updateBookmark = async (
 
 /**
  * GET /api/v1/bookmarks/preview?url=...
- * Fetches HTML title, description, and favicon for a given URL with timeout and fallback.
+ * Fetches HTML title, description, favicon, and suggested category for a given URL.
  */
 export const getBookmarkPreview = async (
   req: Request,
@@ -281,122 +303,17 @@ export const getBookmarkPreview = async (
       });
     }
 
-    let parsedUrl: URL;
-    try {
-      let formatted = rawUrl.trim();
-      if (!/^https?:\/\//i.test(formatted)) {
-        formatted = `https://${formatted}`;
-      }
-      parsedUrl = new URL(formatted);
-    } catch {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_URL",
-          message: "Could not parse provided URL",
-        },
-      });
-    }
-
-    const domain = parsedUrl.hostname.replace(/^www\./, "");
-    const fallbackFavicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
-
-    let title = domain;
-    let description = "";
-    let favicon = fallbackFavicon;
-
-    try {
-      const response = await fetch(parsedUrl.href, {
-        signal: AbortSignal.timeout(4500),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-
-      if (response.ok) {
-        const text = await response.text();
-        const headHtml = text.slice(0, 150000);
-
-        // Extract og:title or title tag
-        const ogTitleMatch =
-          headHtml.match(
-            /<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i
-          ) ||
-          headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i
-          );
-        const titleTagMatch = headHtml.match(/<title[^>]*>([^<]+)<\/title>/i);
-
-        if (ogTitleMatch && ogTitleMatch[1]) {
-          title = ogTitleMatch[1].trim();
-        } else if (titleTagMatch && titleTagMatch[1]) {
-          title = titleTagMatch[1].trim();
-        }
-
-        // Clean HTML entities from title
-        title = title
-          .replace(/&amp;/g, "&")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&ndash;/g, "–")
-          .replace(/&mdash;/g, "—")
-          .trim();
-
-        // Extract description
-        const ogDescMatch =
-          headHtml.match(
-            /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i
-          ) ||
-          headHtml.match(
-            /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i
-          ) ||
-          headHtml.match(
-            /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i
-          );
-
-        if (ogDescMatch && ogDescMatch[1]) {
-          description = ogDescMatch[1]
-            .replace(/&amp;/g, "&")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .trim();
-        }
-
-        // Extract favicon link
-        const iconMatch =
-          headHtml.match(
-            /<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i
-          ) ||
-          headHtml.match(
-            /<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i
-          );
-
-        if (iconMatch && iconMatch[1]) {
-          try {
-            favicon = new URL(iconMatch[1], parsedUrl.origin).href;
-          } catch {
-            favicon = fallbackFavicon;
-          }
-        }
-      }
-    } catch {
-      // Fallback values retained
-    }
+    const metadata = await fetchUrlMetadata(rawUrl, 4500);
 
     return res.status(200).json({
       success: true,
       data: {
-        title,
-        description,
-        favicon,
-        domain,
-        url: parsedUrl.href,
+        title: metadata.title,
+        description: metadata.description,
+        favicon: metadata.favicon,
+        domain: metadata.domain,
+        url: metadata.url,
+        suggestedCategory: metadata.suggestedCategory,
       },
     });
   } catch (error) {

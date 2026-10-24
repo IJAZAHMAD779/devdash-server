@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { Priority, TaskStatus } from "@prisma/client";
+import { fetchUrlMetadata } from "../lib/url-metadata";
 
 export interface AiChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -147,20 +148,20 @@ const AI_TOOLS = [
     type: "function",
     function: {
       name: "create_bookmark",
-      description: "Save a developer resource, documentation, or tool bookmark.",
+      description: "Save a developer resource, documentation, design site, or tool bookmark. Automatically inspects the live webpage to extract the real title, summary notes, and category (e.g. 'design', 'repo', 'docs', 'tools') if not explicitly specified.",
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Title of the bookmark or site" },
-          url: { type: "string", description: "Full web URL" },
+          url: { type: "string", description: "Full web URL (e.g. 'https://touch-type.runable.site/')" },
+          title: { type: "string", description: "Optional title. If omitted, will be extracted automatically from the live page." },
           category: {
             type: "string",
-            description: "Category: 'tools', 'repo', 'design', 'hosting', 'prompts', 'cloud', 'docs'"
+            description: "Optional category: 'design', 'repo', 'docs', 'tools', 'hosting', 'cloud', 'prompts', or custom. If omitted, will be intelligently classified from page content."
           },
-          notes: { type: "string", description: "Optional notes about why this resource is useful" },
-          projectName: { type: "string", description: "Optional project name" }
+          notes: { type: "string", description: "Optional notes. If omitted, will be summarized accurately from the live page." },
+          projectName: { type: "string", description: "Optional project name to link this bookmark to" }
         },
-        required: ["title", "url"]
+        required: ["url"]
       }
     }
   },
@@ -168,20 +169,24 @@ const AI_TOOLS = [
     type: "function",
     function: {
       name: "query_workspace",
-      description: "Query the user's workspace to retrieve active projects, pending/overdue tasks, upcoming reminders, or recent notes.",
+      description: "Search and query the user's workspace to find bookmarks, notes, tasks, projects, or reminders by title, category, tags, or content.",
       parameters: {
         type: "object",
         properties: {
           entityType: {
             type: "string",
-            enum: ["tasks", "projects", "reminders", "notes"],
-            description: "The type of workspace entity to query"
+            enum: ["bookmarks", "notes", "tasks", "projects", "reminders"],
+            description: "The type of workspace entity to query or search"
           },
-          filter: {
+          query: {
             type: "string",
-            description: "Optional filter: 'pending', 'completed', 'overdue', 'recent', or a search term"
+            description: "Search keyword, category name, title snippet, or tag (e.g. 'text', 'animation', 'tools', 'react', 'pending')"
           },
-          limit: { type: "number", description: "Max items to return (default 5, max 15)" }
+          category: {
+            type: "string",
+            description: "Optional category filter (e.g. 'text', 'tools', 'design', 'repo')"
+          },
+          limit: { type: "number", description: "Max items to return (default 10, max 25)" }
         },
         required: ["entityType"]
       }
@@ -191,17 +196,18 @@ const AI_TOOLS = [
     type: "function",
     function: {
       name: "update_bookmark",
-      description: "Update an existing bookmark's notes, category, tags, title, or favorite status.",
+      description: "Update an existing bookmark's notes, category, tags, title, or favorite status. Can match the bookmark by URL, title, or ID.",
       parameters: {
         type: "object",
         properties: {
           bookmarkId: { type: "string", description: "UUID of the bookmark if known" },
-          searchQuery: { type: "string", description: "Title or URL snippet to find the bookmark if ID is unknown" },
-          notes: { type: "string", description: "Updated developer notes or summary" },
-          category: { type: "string", description: "Category/folder for the bookmark" },
-          tags: { type: "array", items: { type: "string" }, description: "Tags for the bookmark" },
+          url: { type: "string", description: "Full or partial URL of the bookmark to update" },
+          searchQuery: { type: "string", description: "Title, domain, or keyword to find the bookmark" },
+          notes: { type: "string", description: "Updated developer notes or description. If set to 'auto', notes will be generated from the live page." },
+          category: { type: "string", description: "Updated category or folder" },
+          tags: { type: "array", items: { type: "string" }, description: "Updated tags" },
           title: { type: "string", description: "Updated title" },
-          favorite: { type: "boolean", description: "Mark as favorite/starred" }
+          favorite: { type: "boolean", description: "Mark as favorite" }
         }
       }
     }
@@ -472,38 +478,134 @@ async function executeTool(
           if (match) projectId = match.id;
         }
 
+        let title = (args.title || "").trim();
+        let category = (args.category || "").trim().toLowerCase();
+        let notes = (args.notes || "").trim();
+
+        // Automatically fetch live webpage metadata
+        try {
+          const meta = await fetchUrlMetadata(args.url, 3500);
+          if (!title || title === args.url) {
+            title = meta.title;
+          }
+          if (!category || category === "tools") {
+            category = meta.suggestedCategory || "tools";
+          }
+          if (!notes && meta.description) {
+            notes = meta.description;
+          }
+        } catch {
+          // keep fallback
+        }
+
+        if (!title) title = args.url;
+        if (!category) category = "tools";
+
         const bookmark = await prisma.bookmark.create({
           data: {
             userId,
-            title: args.title,
+            title,
             url: args.url,
-            category: args.category || "tools",
-            notes: args.notes || null,
+            category,
+            notes: notes || null,
             projectId: projectId || null,
           }
         });
 
+        await prisma.activityLog.create({
+          data: {
+            userId,
+            entityType: "BOOKMARK",
+            entityId: bookmark.id,
+            action: "CREATED",
+            title: `AI created bookmark: ${bookmark.title}`
+          }
+        }).catch(() => null);
+
         return {
-          result: `Bookmark created successfully: ID ${bookmark.id}, title "${bookmark.title}", URL "${bookmark.url}".`,
+          result: `Bookmark created successfully: "${bookmark.title}" under category "${bookmark.category}" with notes: "${bookmark.notes || "None"}". URL: ${bookmark.url}`,
           action: {
             type: "BOOKMARK",
             id: bookmark.id,
             title: bookmark.title,
-            details: { url: bookmark.url, category: bookmark.category },
+            details: { url: bookmark.url, category: bookmark.category, notes: bookmark.notes },
             url: "/resources"
           }
         };
       }
 
       case "query_workspace": {
-        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 15);
-        if (args.entityType === "tasks") {
+        const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 25);
+        const rawSearch = (args.query || args.search || args.filter || "").trim();
+        const categoryFilter = (args.category || "").trim();
+
+        if (args.entityType === "bookmarks") {
+          const whereClause: any = { userId };
+          if (categoryFilter && categoryFilter.toLowerCase() !== "all") {
+            whereClause.category = { equals: categoryFilter, mode: "insensitive" };
+          }
+          if (rawSearch && rawSearch.toLowerCase() !== "all") {
+            whereClause.OR = [
+              { title: { contains: rawSearch, mode: "insensitive" } },
+              { url: { contains: rawSearch, mode: "insensitive" } },
+              { notes: { contains: rawSearch, mode: "insensitive" } },
+              { category: { contains: rawSearch, mode: "insensitive" } },
+              { tags: { has: rawSearch.toLowerCase() } }
+            ];
+          }
+
+          const bookmarks = await prisma.bookmark.findMany({
+            where: whereClause,
+            take: limit,
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, title: true, url: true, category: true, notes: true, tags: true }
+          });
+
+          return {
+            result: JSON.stringify({ count: bookmarks.length, bookmarks }),
+            action: {
+              type: "QUERY",
+              title: `Found ${bookmarks.length} bookmark${bookmarks.length === 1 ? "" : "s"}`,
+              details: { bookmarks }
+            }
+          };
+        } else if (args.entityType === "notes") {
+          const whereClause: any = { userId };
+          if (rawSearch && rawSearch.toLowerCase() !== "all") {
+            whereClause.OR = [
+              { title: { contains: rawSearch, mode: "insensitive" } },
+              { content: { contains: rawSearch, mode: "insensitive" } },
+              { tags: { has: rawSearch.toLowerCase() } }
+            ];
+          }
+
+          const notes = await prisma.note.findMany({
+            where: whereClause,
+            take: limit,
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, title: true, tags: true }
+          });
+
+          return {
+            result: JSON.stringify({ count: notes.length, notes }),
+            action: {
+              type: "QUERY",
+              title: `Found ${notes.length} note${notes.length === 1 ? "" : "s"}`,
+              details: { notes }
+            }
+          };
+        } else if (args.entityType === "tasks") {
           const whereClause: any = { userId };
           if (args.filter === "pending") whereClause.status = { not: "DONE" };
-          if (args.filter === "completed") whereClause.status = "DONE";
-          if (args.filter === "overdue") {
+          else if (args.filter === "completed") whereClause.status = "DONE";
+          else if (args.filter === "overdue") {
             whereClause.dueDate = { lt: new Date() };
             whereClause.status = { not: "DONE" };
+          } else if (rawSearch) {
+            whereClause.OR = [
+              { title: { contains: rawSearch, mode: "insensitive" } },
+              { description: { contains: rawSearch, mode: "insensitive" } }
+            ];
           }
 
           const tasks = await prisma.task.findMany({
@@ -517,13 +619,20 @@ async function executeTool(
             result: JSON.stringify({ count: tasks.length, tasks }),
             action: {
               type: "QUERY",
-              title: `Found ${tasks.length} tasks`,
+              title: `Found ${tasks.length} task${tasks.length === 1 ? "" : "s"}`,
               details: { tasks }
             }
           };
         } else if (args.entityType === "projects") {
+          const whereClause: any = { userId };
+          if (rawSearch) {
+            whereClause.OR = [
+              { title: { contains: rawSearch, mode: "insensitive" } },
+              { description: { contains: rawSearch, mode: "insensitive" } }
+            ];
+          }
           const projects = await prisma.project.findMany({
-            where: { userId },
+            where: whereClause,
             take: limit,
             orderBy: { updatedAt: "desc" },
             select: { id: true, title: true, status: true, techStack: true }
@@ -532,13 +641,18 @@ async function executeTool(
             result: JSON.stringify({ count: projects.length, projects }),
             action: {
               type: "QUERY",
-              title: `Found ${projects.length} projects`,
+              title: `Found ${projects.length} project${projects.length === 1 ? "" : "s"}`,
               details: { projects }
             }
           };
-        } else if (args.entityType === "reminders") {
+        } else {
+          // reminders
+          const whereClause: any = { userId, isSent: false };
+          if (rawSearch) {
+            whereClause.title = { contains: rawSearch, mode: "insensitive" };
+          }
           const reminders = await prisma.reminder.findMany({
-            where: { userId, isSent: false },
+            where: whereClause,
             take: limit,
             orderBy: { remindAt: "asc" },
             select: { id: true, title: true, remindAt: true }
@@ -551,21 +665,6 @@ async function executeTool(
               details: { reminders }
             }
           };
-        } else {
-          const notes = await prisma.note.findMany({
-            where: { userId },
-            take: limit,
-            orderBy: { updatedAt: "desc" },
-            select: { id: true, title: true, tags: true }
-          });
-          return {
-            result: JSON.stringify({ count: notes.length, notes }),
-            action: {
-              type: "QUERY",
-              title: `Found ${notes.length} notes`,
-              details: { notes }
-            }
-          };
         }
       }
 
@@ -576,27 +675,50 @@ async function executeTool(
             where: { id: args.bookmarkId, userId }
           });
         }
-        if (!bookmark && args.searchQuery) {
+
+        const lookupTerm = (args.url || args.searchQuery || args.title || "").trim();
+        if (!bookmark && lookupTerm) {
+          const cleanTerm = lookupTerm.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
           bookmark = await prisma.bookmark.findFirst({
             where: {
               userId,
               OR: [
-                { title: { contains: args.searchQuery, mode: "insensitive" } },
-                { url: { contains: args.searchQuery, mode: "insensitive" } }
+                { url: { contains: cleanTerm, mode: "insensitive" } },
+                { url: { contains: lookupTerm, mode: "insensitive" } },
+                { title: { contains: lookupTerm, mode: "insensitive" } },
+                { title: { contains: cleanTerm, mode: "insensitive" } }
               ]
             }
           });
         }
 
         if (!bookmark) {
-          return { result: `Bookmark matching "${args.bookmarkId || args.searchQuery}" not found.` };
+          return { result: `Bookmark matching "${lookupTerm || args.bookmarkId}" not found in your workspace.` };
+        }
+
+        let newNotes = args.notes !== undefined ? args.notes : undefined;
+        let newCategory = args.category !== undefined ? args.category.toLowerCase().trim() : undefined;
+
+        // If user asked to auto-generate or didn't supply notes for an update request, scrape live page
+        if (args.notes === "auto" || (newNotes === undefined && !newCategory && !args.title && !args.tags && args.favorite === undefined)) {
+          try {
+            const meta = await fetchUrlMetadata(bookmark.url, 3500);
+            if (meta.description) newNotes = meta.description;
+            if (!bookmark.category || bookmark.category === "tools") {
+              if (meta.suggestedCategory && meta.suggestedCategory !== "tools") {
+                newCategory = meta.suggestedCategory;
+              }
+            }
+          } catch {
+            // retain
+          }
         }
 
         const updated = await prisma.bookmark.update({
           where: { id: bookmark.id },
           data: {
-            ...(args.notes !== undefined && { notes: args.notes }),
-            ...(args.category !== undefined && { category: args.category.toLowerCase().trim() }),
+            ...(newNotes !== undefined && { notes: newNotes }),
+            ...(newCategory !== undefined && { category: newCategory }),
             ...(Array.isArray(args.tags) && { tags: args.tags }),
             ...(args.title !== undefined && { title: args.title }),
             ...(args.favorite !== undefined && { favorite: args.favorite })
@@ -614,7 +736,7 @@ async function executeTool(
         }).catch(() => null);
 
         return {
-          result: `Bookmark "${updated.title}" updated successfully with notes: "${updated.notes || "None"}".`,
+          result: `Bookmark "${updated.title}" updated successfully: notes "${updated.notes || "None"}", category "${updated.category}".`,
           action: {
             type: "UPDATE_BOOKMARK",
             id: updated.id,
@@ -789,9 +911,11 @@ CURRENT CONTEXT:
 ${userProjects.length > 0 ? userProjects.map(p => `  * ${p.title} (${p.status})`).join("\n") : "  (No projects yet)"}
 
 CORE CAPABILITIES & PERMISSIONS:
-1. You have FULL PERMISSION to create, edit, update, and enrich workspace entities (bookmarks, tasks, notes, snippets, reminders).
-2. NEVER tell the user "I only create, I cannot edit or update". You CAN update entities using your tools:
-   - For updating bookmarks (adding notes, changing categories/tags): invoke 'update_bookmark' or 'enrich_bookmarks'.
+1. You have FULL PERMISSION to create, edit, update, search, and enrich workspace entities (bookmarks, tasks, notes, snippets, reminders).
+2. NEVER tell the user "I only create, I cannot edit or update". You CAN update and query entities using your tools:
+   - For querying/listing bookmarks or notes (e.g. "List notes from text category", "List all bookmarks in design", "Search bookmarks for touch-type"): invoke 'query_workspace' with entityType: "bookmarks" or "notes" and search/category parameters.
+   - For adding a bookmark: invoke 'create_bookmark' with url. The backend will automatically inspect the live page to extract its real title, description notes, and category.
+   - For updating bookmarks (adding notes, changing categories/tags): invoke 'update_bookmark' with url, title, or searchQuery.
    - For auto-generating notes for imported bookmarks: invoke 'enrich_bookmarks'.
    - For updating tasks (status, priority, due date): invoke 'update_task'.
    - For updating notes: invoke 'update_note'.
@@ -813,11 +937,11 @@ CORE CAPABILITIES & PERMISSIONS:
   let responseData: any;
 
   try {
-    responseData = await callGroq(apiKey, activeModel, messages);
+    responseData = await callGroq(apiKey, activeModel, messages, true);
   } catch (err: any) {
     console.warn(`[AiService] Primary model ${activeModel} failed: ${err.message}. Retrying with ${FALLBACK_MODEL}`);
     activeModel = FALLBACK_MODEL;
-    responseData = await callGroq(apiKey, activeModel, messages);
+    responseData = await callGroq(apiKey, activeModel, messages, true);
   }
 
   const choice = responseData?.choices?.[0];
@@ -851,18 +975,58 @@ CORE CAPABILITIES & PERMISSIONS:
       });
     }
 
-    // Call Qwen again to get final conversational summary of the actions
+    // Call Qwen again without tools to get final conversational summary of the actions
     try {
-      const finalRes = await callGroq(apiKey, activeModel, messages);
+      const finalRes = await callGroq(apiKey, activeModel, messages, false);
       const finalReply = finalRes?.choices?.[0]?.message?.content || "Actions completed.";
       return {
         reply: finalReply,
         actions: executedActions,
         modelUsed: activeModel
       };
-    } catch {
+    } catch (err: any) {
+      console.error("[AiService] Follow-up Groq completion failed:", err?.message || err);
+      // Format a smart conversational summary directly from executedActions
+      const actionSummaries = executedActions.map(a => {
+        if (a.type === "QUERY") {
+          const details = a.details as any;
+          if (details?.bookmarks) {
+            if (details.bookmarks.length === 0) return "No bookmarks found matching your query in the workspace.";
+            return `Found ${details.bookmarks.length} bookmark${details.bookmarks.length === 1 ? "" : "s"}:\n` +
+              details.bookmarks.map((b: any) => `• **${b.title}** (${b.url}) — \`${b.category || "tools"}\`${b.notes ? `\n  _${b.notes}_` : ""}`).join("\n");
+          }
+          if (details?.notes) {
+            if (details.notes.length === 0) return "No notes found matching your query in the workspace.";
+            return `Found ${details.notes.length} note${details.notes.length === 1 ? "" : "s"}:\n` +
+              details.notes.map((n: any) => `• **${n.title}**${n.tags?.length ? ` [${n.tags.join(", ")}]` : ""}`).join("\n");
+          }
+          if (details?.tasks) {
+            if (details.tasks.length === 0) return "No tasks found matching your query in the workspace.";
+            return `Found ${details.tasks.length} task${details.tasks.length === 1 ? "" : "s"}:\n` +
+              details.tasks.map((t: any) => `• **${t.title}** (\`${t.status}\` | ${t.priority})`).join("\n");
+          }
+          if (details?.projects) {
+            if (details.projects.length === 0) return "No projects found matching your query in the workspace.";
+            return `Found ${details.projects.length} project${details.projects.length === 1 ? "" : "s"}:\n` +
+              details.projects.map((p: any) => `• **${p.title}** (\`${p.status}\`)`).join("\n");
+          }
+        }
+        if (a.type === "UPDATE_BOOKMARK") {
+          return `Updated bookmark **${a.title}**${a.details?.notes ? ` with notes: "${a.details.notes}"` : ""}${a.details?.category ? ` in category \`${a.details.category}\`` : ""}.`;
+        }
+        if (a.type === "BOOKMARK") {
+          return `Saved bookmark **${a.title}** (${a.details?.url}) under \`${a.details?.category || "tools"}\`${a.details?.notes ? ` with notes: "${a.details.notes}"` : ""}.`;
+        }
+        if (a.type === "ENRICH_BOOKMARKS") {
+          return `Enriched ${a.details?.count || 0} bookmarks with AI notes and tags.`;
+        }
+        return `${a.title}`;
+      });
+
       return {
-        reply: "Requested actions have been executed successfully in your workspace.",
+        reply: actionSummaries.length > 0
+          ? actionSummaries.join("\n\n")
+          : "Action executed successfully in your workspace.",
         actions: executedActions,
         modelUsed: activeModel
       };
@@ -876,21 +1040,26 @@ CORE CAPABILITIES & PERMISSIONS:
   };
 }
 
-async function callGroq(apiKey: string, model: string, messages: AiChatMessage[]): Promise<any> {
+async function callGroq(apiKey: string, model: string, messages: AiChatMessage[], withTools = true): Promise<any> {
+  const payload: any = {
+    model,
+    messages,
+    temperature: 0.2,
+    max_tokens: 1024
+  };
+
+  if (withTools) {
+    payload.tools = AI_TOOLS;
+    payload.tool_choice = "auto";
+  }
+
   const res = await fetch(GROQ_API_URL, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      tools: AI_TOOLS,
-      tool_choice: "auto",
-      temperature: 0.2,
-      max_tokens: 1024
-    })
+    body: JSON.stringify(payload)
   });
 
   if (!res.ok) {
@@ -902,25 +1071,34 @@ async function callGroq(apiKey: string, model: string, messages: AiChatMessage[]
 }
 
 /**
- * Call Groq to generate developer notes and tags for a list of bookmarks
+ * Call Groq to generate developer notes and tags for a list of bookmarks with real page context
  */
 export async function generateNotesForBookmarks(
-  bookmarks: Array<{ id: string; title: string; url: string; category?: string | null }>,
+  bookmarks: Array<{ id: string; title: string; url: string; pageDescription?: string; category?: string | null }>,
   apiKey: string
-): Promise<Array<{ id: string; notes: string; tags: string[] }>> {
+): Promise<Array<{ id: string; notes: string; tags: string[]; category?: string }>> {
   if (!bookmarks.length) return [];
 
-  const prompt = `You are a developer workspace intelligence system. For each developer bookmark below (given title, url, category), produce:
-1. "notes": A crisp, high-value 1-2 sentence developer summary explaining what this tool, documentation, library, or website is and why developers use it.
-2. "tags": 2-4 lowercase relevant developer tags (e.g., ["react", "ui", "tailwind"], ["database", "postgresql", "orm"]).
+  const prompt = `You are a developer workspace intelligence system. For each bookmark below (with live title, url, scraped page description, and category), generate:
+1. "notes": A crisp, highly accurate 1-2 sentence developer summary explaining what this tool, resource, website, or library does and why developers use it. Base your summary on the provided page description and features. DO NOT output generic phrases like "Developer bookmark for..." or "Tool to...".
+2. "tags": 2-4 lowercase relevant developer tags (e.g. ["typography", "animation", "canvas"], ["react", "ui", "tailwind"], ["database", "postgresql", "orm"]).
+3. "category": Suggested folder/category (e.g. "design", "tools", "repo", "docs", "hosting", "prompts").
 
 Bookmarks to enrich:
-${JSON.stringify(bookmarks.map(b => ({ id: b.id, title: b.title, url: b.url, category: b.category })))}
+${JSON.stringify(
+  bookmarks.map(b => ({
+    id: b.id,
+    title: b.title,
+    url: b.url,
+    pageDescription: b.pageDescription || "Not available",
+    category: b.category || "tools"
+  }))
+)}
 
 OUTPUT INSTRUCTION:
-Return ONLY a valid JSON array of objects with keys: "id", "notes", "tags".
+Return ONLY a valid JSON array of objects with keys: "id", "notes", "tags", "category".
 Example:
-[{"id": "...", "notes": "...", "tags": ["tag1", "tag2"]}]`;
+[{"id": "...", "notes": "...", "tags": ["tag1", "tag2"], "category": "design"}]`;
 
   const model = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
   const res = await fetch(GROQ_API_URL, {
@@ -965,7 +1143,7 @@ Example:
 }
 
 /**
- * Batch enrich bookmarks for a user, using Groq AI with clean fallback heuristics
+ * Batch enrich bookmarks for a user, using live metadata scraping + Groq AI with clean fallback heuristics
  */
 export async function enrichBookmarksBatch(
   userId: string,
@@ -977,11 +1155,13 @@ export async function enrichBookmarksBatch(
 ): Promise<{ enrichedCount: number; bookmarks: any[] }> {
   const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 50);
 
+  // Target bookmarks with no notes OR with the legacy boilerplate template
   const whereClause: any = {
     userId,
     OR: [
       { notes: null },
-      { notes: "" }
+      { notes: "" },
+      { notes: { startsWith: "Developer bookmark for" } }
     ]
   };
 
@@ -1003,38 +1183,62 @@ export async function enrichBookmarksBatch(
     return { enrichedCount: 0, bookmarks: [] };
   }
 
+  // Scrape live metadata for all targets in parallel (3s timeout)
+  const metadataResults = await Promise.allSettled(
+    targets.map(b => fetchUrlMetadata(b.url, 3000))
+  );
+
+  const targetsWithMeta = targets.map((b, idx) => {
+    const metaRes = metadataResults[idx];
+    const meta = metaRes.status === "fulfilled" ? metaRes.value : null;
+    return {
+      ...b,
+      title: meta?.title && meta.title !== meta.domain ? meta.title : b.title,
+      pageDescription: meta?.description || "",
+      suggestedCategory: meta?.suggestedCategory || b.category || "tools"
+    };
+  });
+
   const apiKey = process.env.GROQ_API_KEY;
-  let enrichedData: Array<{ id: string; notes: string; tags: string[] }> = [];
+  let enrichedData: Array<{ id: string; notes: string; tags: string[]; category?: string }> = [];
 
   if (apiKey && apiKey !== "your_groq_api_key_here") {
     try {
-      enrichedData = await generateNotesForBookmarks(targets, apiKey);
+      enrichedData = await generateNotesForBookmarks(targetsWithMeta, apiKey);
     } catch (err: any) {
-      console.warn("[AiService] Groq batch enrichment failed, falling back to heuristic generator:", err.message);
+      console.warn("[AiService] Groq batch enrichment failed, falling back to scraped page descriptions:", err.message);
     }
   }
 
   const finalUpdates: any[] = [];
-  for (const b of targets) {
+  for (const b of targetsWithMeta) {
     const existingResult = enrichedData.find(item => item.id === b.id);
     let noteText = existingResult?.notes?.trim();
     let tagsList = Array.isArray(existingResult?.tags) ? existingResult.tags : [];
+    let finalCategory = existingResult?.category || b.category || b.suggestedCategory || "tools";
 
+    // If Groq didn't return a note, use the scraped page description or smart domain summary
     if (!noteText) {
-      let domain = "";
-      try {
-        domain = new URL(b.url).hostname.replace(/^www\./, "");
-      } catch {
-        domain = "web resource";
+      if (b.pageDescription && b.pageDescription.length > 10) {
+        noteText = b.pageDescription;
+      } else {
+        let domain = "";
+        try {
+          domain = new URL(b.url).hostname.replace(/^www\./, "");
+        } catch {
+          domain = "web resource";
+        }
+        noteText = `${b.title || domain} - Web resource and developer utility.`;
       }
-      noteText = `Developer bookmark for ${b.title || domain} (${b.category || "tools"}).`;
-      tagsList = [b.category || "tools", domain.split(".")[0]].filter(Boolean);
+      tagsList = [finalCategory, (b.title || "").split(" ")[0].toLowerCase()].filter(Boolean);
     }
 
     const updated = await prisma.bookmark.update({
       where: { id: b.id },
       data: {
+        title: b.title,
         notes: noteText,
+        category: finalCategory.toLowerCase().trim(),
         tags: Array.from(new Set([...(b.tags || []), ...tagsList]))
       },
       include: {
@@ -1051,7 +1255,7 @@ export async function enrichBookmarksBatch(
       entityType: "BOOKMARK",
       entityId: "batch-ai",
       action: "UPDATED",
-      title: `AI generated notes for ${finalUpdates.length} bookmarks`
+      title: `AI enriched ${finalUpdates.length} bookmarks with accurate notes`
     }
   }).catch(() => null);
 
